@@ -66,6 +66,8 @@ CALL quack_serve(
     token => quack_token()
 );
 CALL tailscale_serve_local(port => ${QUACK_PORT});
+
+SELECT 'QUACKTAIL_SERVER_READY' AS status;
 SQL
 }
 
@@ -229,7 +231,8 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || [[ ! -f "$WORK/server_quack.sql" ]] \
     || grep -q 'quack_uri()' "$WORK/server_quack.sql" 2>/dev/null \
     || grep -q '0\.0\.0\.0' "$WORK/server_quack.sql" 2>/dev/null \
-    || ! grep -q 'tailscale_serve_local' "$WORK/server_quack.sql" 2>/dev/null; then
+    || ! grep -q 'tailscale_serve_local' "$WORK/server_quack.sql" 2>/dev/null \
+    || ! grep -q 'QUACKTAIL_SERVER_READY' "$WORK/server_quack.sql" 2>/dev/null; then
     write_server_quack_sql
     echo "✓ server quack SQL ready — loopback + tailscale_serve_local(:${QUACK_PORT})"
   fi

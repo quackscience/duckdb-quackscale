@@ -76,6 +76,31 @@ wait_for_tailnet_server() {
   return 1
 }
 
+wait_for_server_quack_ready() {
+  [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
+  local attempts="${QUACKTAIL_SERVER_WAIT_ATTEMPTS:-120}"
+  local poll_sec="${QUACKTAIL_SERVER_WAIT_POLL_SEC:-1}"
+  local marker="${QUACKTAIL_SERVER_READY_MARKER:-QUACKTAIL_SERVER_READY}"
+  local server_log="${WORK}/server.log"
+  if [[ "$QUIET" == "1" ]]; then
+    echo "→ waiting for server quack_serve + tailscale_serve_local ..."
+  else
+    echo "Waiting for ${marker} in ${server_log} (up to ${attempts}s) ..."
+  fi
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if [[ -f "${WORK}/quack_ready" ]] && grep -Fq "$marker" "$server_log" 2>/dev/null; then
+      [[ "$QUIET" == "1" ]] && echo "✓ server Quack endpoint ready"
+      [[ "$QUIET" == "1" ]] || echo "Server init complete (${marker})."
+      return 0
+    fi
+    sleep "$poll_sec"
+  done
+  echo "error: server not ready (${marker} missing) after ${attempts}s" >&2
+  [[ -s "$server_log" ]] && tail -30 "$server_log" >&2 || true
+  return 1
+}
+
 resolve_server_tailnet_ip() {
   headscale_cmd nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true
 }
@@ -214,6 +239,7 @@ run_client() {
   local attempt
 
   wait_for_tailnet_server
+  wait_for_server_quack_ready
   ensure_quack
   ensure_server_hosts_mapping
   ensure_client_sql
@@ -228,6 +254,7 @@ run_client() {
     echo "QuackTail cluster demo"
     echo "======================"
     echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
+    echo "  (client tsnet logs → ${WORK}/client-tsnet.log; first join can take 30–60s in Docker)"
     echo ""
   else
     echo "=== client session SQL (-init) ==="
