@@ -1,10 +1,9 @@
-# Minimal Headscale config for QuackScale CI (http://127.0.0.1:8080).
-# See https://github.com/juanfont/headscale and docs/HEADSCALE.md
+# CI config — clients reach Headscale at http://headscale:8080 (Docker network alias).
 
-server_url: http://127.0.0.1:8080
+server_url: http://headscale:8080
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 127.0.0.1:9090
-grpc_listen_addr: 127.0.0.1:50443
+grpc_listen_addr: 0.0.0.0:50443
 grpc_allow_insecure: true
 
 noise:

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Headscale helpers for CI (official container image).
+# Headscale helpers for CI — official container only, no custom images.
 # https://headscale.net/stable/setup/install/container/
+#
+# Starts docker.io/headscale/headscale on network "quacktail-ci" with hostname alias
+# "headscale". Native processes on the runner reach it via /etc/hosts → 127.0.0.1:8080.
+# Other containers (Tailscale verify) join quacktail-ci and use http://headscale:8080.
 set -euo pipefail
 
 HEADSCALE_IMAGE="${HEADSCALE_IMAGE:-docker.io/headscale/headscale:0.28.0}"
-HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-quackscale-headscale-ci}"
-HEADSCALE_CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://127.0.0.1:8080}"
+HEADSCALE_CONTAINER="${HEADSCALE_CONTAINER:-headscale}"
+HEADSCALE_DOCKER_NETWORK="${HEADSCALE_DOCKER_NETWORK:-quacktail-ci}"
+HEADSCALE_HOST="${HEADSCALE_HOST:-headscale}"
+HEADSCALE_CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://${HEADSCALE_HOST}:8080}"
 HEADSCALE_CI_USER="${HEADSCALE_CI_USER:-quackscale-ci}"
 HEADSCALE_CONFIG_DIR="${HEADSCALE_CONFIG_DIR:-${HEADSCALE_CI_ROOT:-.}/test/headscale}"
 TAILSCALE_IMAGE="${TAILSCALE_IMAGE:-tailscale/tailscale:stable}"
@@ -18,10 +24,6 @@ headscale_ci_require_docker() {
 }
 
 headscale_ci_container_id() {
-  if [[ -n "${HEADSCALE_CONTAINER_ID:-}" ]]; then
-    echo "$HEADSCALE_CONTAINER_ID"
-    return 0
-  fi
   docker ps -q --filter "name=^/${HEADSCALE_CONTAINER}$" | head -1
 }
 
@@ -29,7 +31,7 @@ headscale_ci_exec() {
   headscale_ci_require_docker
   local id
   id="$(headscale_ci_container_id)" || {
-    echo "error: Headscale container '$HEADSCALE_CONTAINER' not found" >&2
+    echo "error: Headscale container '$HEADSCALE_CONTAINER' not running" >&2
     docker ps -a >&2 || true
     return 1
   }
@@ -40,13 +42,21 @@ headscale_ci_logs() {
   echo "::group::Headscale container logs"
   if docker ps -a --filter "name=^/${HEADSCALE_CONTAINER}$" --format '{{.Names}}' | grep -qx "$HEADSCALE_CONTAINER"; then
     docker logs "$HEADSCALE_CONTAINER" 2>&1 | tail -100 || true
-  else
-    docker ps -a >&2 || true
   fi
   echo "::endgroup::"
 }
 
+# Runner processes use hostname "headscale" → localhost (published port 8080).
+headscale_ci_install_runner_hosts() {
+  if getent hosts "$HEADSCALE_HOST" >/dev/null 2>&1; then
+    echo "Runner resolves ${HEADSCALE_HOST}: $(getent hosts "$HEADSCALE_HOST" | head -1)"
+    return 0
+  fi
+  echo "127.0.0.1 ${HEADSCALE_HOST}" | sudo tee -a /etc/hosts
+}
+
 headscale_ci_wait_ready() {
+  headscale_ci_install_runner_hosts
   echo "Waiting for Headscale at ${HEADSCALE_CONTROL_URL}/health ..."
   local attempt=0
   while (( attempt < 60 )); do
@@ -57,8 +67,8 @@ headscale_ci_wait_ready() {
       return 0
     fi
     if (( attempt % 5 == 0 )); then
-      echo "  attempt $attempt — container health:"
-      docker inspect --format='{{.State.Health.Status}}' "$HEADSCALE_CONTAINER" 2>/dev/null || true
+      echo "  attempt $attempt ..."
+      docker inspect --format='health={{.State.Health.Status}}' "$HEADSCALE_CONTAINER" 2>/dev/null || true
     fi
     sleep 2
   done
@@ -73,10 +83,15 @@ headscale_ci_start() {
   mkdir -p "$data_dir"
 
   docker rm -f "$HEADSCALE_CONTAINER" >/dev/null 2>&1 || true
-  echo "Starting Headscale ($HEADSCALE_IMAGE) ..."
+  docker network inspect "$HEADSCALE_DOCKER_NETWORK" >/dev/null 2>&1 \
+    || docker network create "$HEADSCALE_DOCKER_NETWORK" >/dev/null
+
+  echo "Starting Headscale ($HEADSCALE_IMAGE) as '$HEADSCALE_CONTAINER' on network '$HEADSCALE_DOCKER_NETWORK' ..."
   docker pull -q "$HEADSCALE_IMAGE" >/dev/null
 
   docker run -d --name "$HEADSCALE_CONTAINER" \
+    --network "$HEADSCALE_DOCKER_NETWORK" \
+    --network-alias "$HEADSCALE_HOST" \
     --read-only \
     --tmpfs /var/run/headscale \
     -v "$HEADSCALE_CONFIG_DIR/config-ci.yaml:/etc/headscale/config.yaml:ro" \
@@ -183,7 +198,6 @@ PY
 
   if [[ -z "$authkey" ]]; then
     echo "error: failed to obtain Headscale preauth key" >&2
-    headscale_ci_exec headscale users list -o json >&2 || true
     headscale_ci_logs
     return 1
   fi
@@ -197,15 +211,14 @@ headscale_ci_verify_tailscale_client() {
   state_dir="$(mktemp -d)"
   container="tailscale-verify-$$"
 
-  echo "Verifying Headscale with Tailscale client ($TAILSCALE_IMAGE) ..."
+  echo "Verifying Headscale with Tailscale client on network '$HEADSCALE_DOCKER_NETWORK' ..."
   docker pull -q "$TAILSCALE_IMAGE" >/dev/null
 
   docker rm -f "$container" >/dev/null 2>&1 || true
-  # Use the image entrypoint (tailscaled + tailscale up); do not override with `tailscale status`.
   docker run -d --name "$container" \
     --cap-add=NET_ADMIN \
     --device=/dev/net/tun \
-    --network=host \
+    --network "$HEADSCALE_DOCKER_NETWORK" \
     -v "$state_dir:/var/lib/tailscale" \
     -e TS_AUTHKEY="$authkey" \
     -e TS_STATE_DIR=/var/lib/tailscale \
@@ -227,10 +240,8 @@ headscale_ci_verify_tailscale_client() {
   set -e
 
   if (( rc != 0 )); then
-    echo "error: Tailscale client could not join Headscale" >&2
-    echo "::group::Tailscale client logs"
-    docker logs "$container" 2>&1 | tail -50 || true
-    echo "::endgroup::"
+    echo "error: Tailscale client could not join at ${HEADSCALE_CONTROL_URL}" >&2
+    docker logs "$container" 2>&1 | tail -50 >&2 || true
     headscale_ci_logs
     headscale_ci_exec headscale nodes list >&2 || true
   fi
@@ -313,11 +324,11 @@ PY
       return 0
     fi
     if (( attempt % 10 == 0 )); then
-      echo "  still waiting for Headscale node '$hostname' (attempt $attempt)..." >&2
+      echo "  still waiting for node '$hostname' (attempt $attempt)..." >&2
     fi
     sleep 2
   done
-  echo "error: no tailnet IPv4 found for node '$hostname'" >&2
+  echo "error: no tailnet IPv4 for node '$hostname'" >&2
   headscale_ci_exec headscale nodes list >&2 || true
   headscale_ci_logs
   return 1
@@ -346,6 +357,6 @@ PY
     fi
     sleep 2
   done
-  echo "error: $host:$port did not become reachable" >&2
+  echo "error: $host:$port not reachable" >&2
   return 1
 }

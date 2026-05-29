@@ -11,7 +11,8 @@ on:
         type: string
 
 env:
-  HEADSCALE_CONTROL_URL: http://127.0.0.1:8080
+  HEADSCALE_HOST: headscale
+  HEADSCALE_CONTROL_URL: http://headscale:8080
 
 jobs:
   quacktail-e2e:
