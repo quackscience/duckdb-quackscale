@@ -66,12 +66,10 @@ configs:
         v4: 100.64.0.0/10
         v6: fd7a:115c:a1e0::/48
       derp:
+        # Embedded DERP requires server_url https:// (headscale 0.28 config-example.yaml).
+        # Lab uses http://headscale:8080 — rely on Tailscale public DERP relays instead.
         server:
-          enabled: true
-          region_id: 999
-          region_code: headscale
-          region_name: Headscale Embedded DERP
-          stun_listen_addr: 0.0.0.0:3478
+          enabled: false
         urls:
           - https://controlplane.tailscale.com/derpmap/default
         paths: []

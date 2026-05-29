@@ -15,11 +15,7 @@ prefixes:
 
 derp:
   server:
-    enabled: true
-    region_id: 999
-    region_code: headscale
-    region_name: Headscale Embedded DERP
-    stun_listen_addr: "0.0.0.0:3478"
+    enabled: false
   urls:
     - https://controlplane.tailscale.com/derpmap/default
   paths: []

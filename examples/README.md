@@ -139,11 +139,10 @@ docker compose --profile test down --remove-orphans -v
 
 **Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`
 
-**Client times out after `CREATE SECRET Success`** — tailscale join succeeded; the stall is **cross-node Quack HTTP** (peer route), not Headscale registration. Ensure embedded DERP is up (`3478/udp` on headscale) and recreate the server:
+**Client times out after `CREATE SECRET Success`** — tailscale join succeeded; the stall is cross-node Quack HTTP, not Headscale. Recreate the server after script changes:
 
 ```bash
-docker compose up -d --force-recreate headscale quacktail-server
-docker compose logs quacktail-server
+docker compose up -d --force-recreate quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```
 
