@@ -413,6 +413,19 @@ headscale_ci_quack_uri_for_ip() {
   echo "quack:${ip}:${port}"
 }
 
+# Quack binds on the host (0.0.0.0). Tailnet IPs are userspace-only until quackscale uses
+# tailscale_listen — on a single CI runner, ATTACH via loopback reaches the server process.
+headscale_ci_e2e_quack_attach_uri() {
+  local server_ip="$1"
+  local port="${2:-9494}"
+  local attach_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  if [[ "$attach_host" == "tailnet" ]]; then
+    headscale_ci_quack_uri_for_ip "$server_ip" "$port"
+  else
+    headscale_ci_quack_uri_for_ip "$attach_host" "$port"
+  fi
+}
+
 # Bind Quack on all interfaces (required for tailnet/tsnet; do not bind tailnet IP or MagicDNS name).
 headscale_ci_sql_quack_serve() {
   local port="${1:-9494}"

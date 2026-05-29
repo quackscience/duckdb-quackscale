@@ -13,6 +13,7 @@ QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-e2e-shared-token}"
 SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
+CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-120}"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
 mkdir -p "$WORK"
@@ -178,10 +179,13 @@ else
 fi
 SERVER_DNS="$(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
 SERVER_QUACK_URI_DNS="$(headscale_ci_quack_client_uri "$SERVER_HOST" "$QUACK_PORT")"
-SERVER_QUACK_URI="$(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
+SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
 echo "Server MagicDNS name (Headscale): ${SERVER_DNS}"
-echo "Client Quack URI (tailnet IP for tsnet): ${SERVER_QUACK_URI}"
-echo "Client Quack URI (MagicDNS, when nodes accept-dns): ${SERVER_QUACK_URI_DNS}"
+echo "Server tailnet IP: ${SERVER_IP}"
+echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI}"
+echo "  (default 127.0.0.1 — quack_serve uses host sockets; set E2E_QUACK_ATTACH_HOST=tailnet when tailscale_listen bridges Quack)"
+echo "Future tailnet ATTACH URI: $(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
+echo "Future MagicDNS ATTACH URI: ${SERVER_QUACK_URI_DNS}"
 
 {
   cat <<SQL
@@ -201,7 +205,7 @@ SERVER_PID=$!
 
 sleep 2
 e2e_wait_for_quack_server
-echo "Client will ATTACH via tailnet IP: ${SERVER_QUACK_URI}"
+echo "Client will ATTACH: ${SERVER_QUACK_URI}"
 
 {
   cat <<SQL
@@ -239,8 +243,14 @@ echo "--- SQL: client.sql ---"
 cat "$WORK/client.sql"
 echo "--- DuckDB output ---"
 : >"$CLIENT_LOG"
-"$DUCKDB" :memory: -batch -echo -f "$WORK/client.sql" 2>&1 | tee -a "$CLIENT_LOG"
+set +e
+timeout "$CLIENT_TIMEOUT" "$DUCKDB" :memory: -batch -echo -f "$WORK/client.sql" 2>&1 | tee -a "$CLIENT_LOG"
 CLIENT_RC=${PIPESTATUS[0]}
+set -e
+if (( CLIENT_RC == 124 )); then
+  echo "error: client DuckDB timed out after ${CLIENT_TIMEOUT}s (likely ATTACH cannot reach quack_serve)" >&2
+  CLIENT_RC=124
+fi
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
 if (( CLIENT_RC != 0 )); then
   echo "error: client DuckDB failed (exit $CLIENT_RC)" >&2
