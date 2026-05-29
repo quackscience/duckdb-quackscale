@@ -344,13 +344,10 @@ PY
   return 1
 }
 
-headscale_ci_wait_tcp() {
+headscale_ci_tcp_reachable() {
   local host="${1:?host}"
   local port="${2:?port}"
-  local attempt=0
-  for _ in $(seq 1 60); do
-    attempt=$((attempt + 1))
-    if python3 - "$host" "$port" <<'PY'
+  python3 - "$host" "$port" <<'PY'
 import socket, sys
 host, port = sys.argv[1], int(sys.argv[2])
 s = socket.socket()
@@ -364,7 +361,15 @@ else:
 finally:
     s.close()
 PY
-    then
+}
+
+headscale_ci_wait_tcp() {
+  local host="${1:?host}"
+  local port="${2:?port}"
+  local attempt=0
+  for _ in $(seq 1 60); do
+    attempt=$((attempt + 1))
+    if headscale_ci_tcp_reachable "$host" "$port"; then
       echo "TCP connect ok: ${host}:${port} (attempt ${attempt})"
       return 0
     fi
@@ -418,7 +423,7 @@ headscale_ci_quack_uri_for_ip() {
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
-  local attach_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  local attach_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
   if [[ "$attach_host" == "tailnet" ]]; then
     headscale_ci_quack_uri_for_ip "$server_ip" "$port"
   else

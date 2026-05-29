@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run DuckDB init SQL and keep the process alive for QuackTail e2e tests."""
+"""Run DuckDB server SQL; quack_serve blocks and keeps the process alive."""
 from __future__ import annotations
 
 import os
@@ -15,21 +15,17 @@ def main() -> int:
         return 2
 
     duckdb, database, init_sql_path, log_path = sys.argv[1:5]
-    init_sql = open(init_sql_path, encoding="utf-8").read()
 
     logf = open(log_path, "a", encoding="utf-8")
+    # quack_serve blocks until the session ends; -batch -echo -f runs through tailscale_up then serves.
     proc = subprocess.Popen(
-        [duckdb, database],
-        stdin=subprocess.PIPE,
+        [duckdb, database, "-batch", "-echo", "-f", init_sql_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         env=os.environ.copy(),
     )
-    assert proc.stdin is not None
     assert proc.stdout is not None
-    proc.stdin.write(init_sql)
-    proc.stdin.close()
 
     def _stream_output() -> None:
         for line in proc.stdout:

@@ -44,12 +44,16 @@ e2e_run_duckdb() {
 }
 
 e2e_wait_for_quack_server() {
+  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
+  if [[ "$wait_host" == "tailnet" ]]; then
+    wait_host="${SERVER_IP:?SERVER_IP required for tailnet wait}"
+  fi
   local attempt=0
-  echo "Waiting for Quack server process (runner is not on the tailnet; checking server log) ..."
+  echo "Waiting for Quack HTTP on ${wait_host}:${QUACK_PORT} (quack_serve blocks the server DuckDB process) ..."
   while (( attempt < 60 )); do
     attempt=$((attempt + 1))
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-      echo "error: server DuckDB exited early" >&2
+      echo "error: server DuckDB exited early (quack_serve should block until killed)" >&2
       tail -80 "$SERVER_LOG" >&2 || true
       headscale_ci_logs
       exit 1
@@ -60,17 +64,17 @@ e2e_wait_for_quack_server() {
       headscale_ci_logs
       exit 1
     fi
-    if grep -qE "listen_uri|listening on port|HTTP URL" "$SERVER_LOG" 2>/dev/null; then
-      echo "Quack server started (see streamed server output above)"
+    if headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
+      echo "Quack is accepting TCP on ${wait_host}:${QUACK_PORT}"
       return 0
     fi
-    if (( attempt >= 15 )) && grep -q "CALL quack_serve" "$SERVER_LOG" 2>/dev/null; then
-      echo "Quack server process still running after quack_serve (no bind error detected)"
-      return 0
+    if (( attempt % 5 == 0 )); then
+      echo "  attempt ${attempt} (server pid ${SERVER_PID}) ..."
+      tail -5 "$SERVER_LOG" 2>/dev/null || true
     fi
     sleep 2
   done
-  echo "error: timed out waiting for Quack server to start" >&2
+  echo "error: Quack not reachable on ${wait_host}:${QUACK_PORT}" >&2
   tail -80 "$SERVER_LOG" >&2 || true
   headscale_ci_logs
   exit 1
@@ -156,19 +160,21 @@ else
 fi
 export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
-# Server bootstrap: tailnet only (quack is loaded later for quack_serve).
+# One long-lived server process: tailscale_up → seed data → quack_serve (blocking on 0.0.0.0).
 {
   headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
   cat <<SQL
 
 CREATE TABLE e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
 INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
+
+LOAD quack;
+
 SQL
-} >"$WORK/server_bootstrap.sql"
+  headscale_ci_sql_quack_serve "$QUACK_PORT"
+} >"$WORK/server_serve.sql"
 
-e2e_run_duckdb "Joining server to Headscale (blocking)" "$SERVER_DB" "$WORK/server_bootstrap.sql" "$SERVER_LOG"
-
-echo "Resolving server tailnet IP..."
+echo "Resolving server tailnet IP (for logs; same-host CI ATTACH uses localhost) ..."
 SERVER_IP=""
 if SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST")"; then
   echo "Server tailnet IP (from Headscale): $SERVER_IP"
@@ -181,25 +187,14 @@ SERVER_DNS="$(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
 SERVER_QUACK_URI_DNS="$(headscale_ci_quack_client_uri "$SERVER_HOST" "$QUACK_PORT")"
 SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
 echo "Server MagicDNS name (Headscale): ${SERVER_DNS}"
-echo "Server tailnet IP: ${SERVER_IP}"
 echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI}"
-echo "  (default 127.0.0.1 — quack_serve uses host sockets; set E2E_QUACK_ATTACH_HOST=tailnet when tailscale_listen bridges Quack)"
-echo "Future tailnet ATTACH URI: $(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
-echo "Future MagicDNS ATTACH URI: ${SERVER_QUACK_URI_DNS}"
-
-{
-  cat <<SQL
-LOAD quack;
-
-SQL
-  headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
-  headscale_ci_sql_quack_serve "$QUACK_PORT"
-} >"$WORK/server_serve.sql"
+echo "  (same-runner CI: localhost + quack on 0.0.0.0; E2E_QUACK_ATTACH_HOST=tailnet when tailscale_listen exists)"
+echo "Tailnet ATTACH (needs tailscale_listen bridge): $(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
 cat "$WORK/server_serve.sql"
-echo "--- DuckDB server output (streamed) ---"
+echo "--- DuckDB server output (streamed; quack_serve blocks) ---"
 python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/server_serve.sql" "$SERVER_LOG" &
 SERVER_PID=$!
 
