@@ -1,0 +1,267 @@
+# QuackTail + Headscale — Linux Docker Compose demo (latest GitHub release).
+#
+#   cd examples
+#   docker compose up -d headscale bootstrap quacktail-server
+#   docker compose --profile test run --rm quacktail-client
+#
+# One-liner:
+#   docker compose up -d headscale bootstrap quacktail-server && \
+#   docker compose --profile test run --rm quacktail-client
+
+name: quacktail-demo
+
+x-env: &env
+  QUACK_PORT: "9494"
+  QUACK_TAILNET_TOKEN: ${QUACK_TAILNET_TOKEN:-quackscale-demo-token}
+  HEADSCALE_CONTROL_URL: http://headscale:8080
+  HEADSCALE_USER: ${HEADSCALE_USER:-quackscale-demo}
+  SERVER_HOST: quacktail-server
+  CLIENT_HOST: quacktail-client
+  DUCKDB_EXTENSION_DIRECTORY: /duckdb_extensions
+
+x-headscale: &headscale_mounts
+  configs:
+    - source: headscale_config
+      target: /etc/headscale/config.yaml
+    - source: headscale_policy
+      target: /etc/headscale/policy.hujson
+  volumes:
+    - headscale-data:/var/lib/headscale
+    - headscale-run:/var/run/headscale
+
+x-quacktail: &quacktail
+  build:
+    context: ..
+    dockerfile: examples/Dockerfile
+    args:
+      GITHUB_REPO: ${GITHUB_REPO:-quackscience/duckdb-quackscale}
+  cap_add: [NET_ADMIN]
+  devices: [/dev/net/tun]
+  volumes: [quacktail-work:/work]
+  environment:
+    <<: *env
+    QUACKTAIL_WORK: /work
+  networks: [quacktail]
+
+configs:
+  headscale_config:
+    content: |
+      server_url: http://headscale:8080
+      listen_addr: 0.0.0.0:8080
+      metrics_listen_addr: 127.0.0.1:9090
+      grpc_listen_addr: 0.0.0.0:50443
+      grpc_allow_insecure: true
+      noise:
+        private_key_path: /var/lib/headscale/noise_private.key
+      prefixes:
+        v4: 100.64.0.0/10
+        v6: fd7a:115c:a1e0::/48
+      derp:
+        server:
+          enabled: false
+        urls:
+          - https://controlplane.tailscale.com/derpmap/default
+        paths: []
+        auto_update_enabled: true
+      disable_check_updates: true
+      database:
+        type: sqlite
+        sqlite:
+          path: /var/lib/headscale/db.sqlite
+          write_ahead_log: true
+      log:
+        level: info
+      policy:
+        mode: file
+        path: /etc/headscale/policy.hujson
+      dns:
+        magic_dns: true
+        base_domain: quackscale.test
+        override_local_dns: true
+        nameservers:
+          global: [1.1.1.1, 1.0.0.1]
+        extra_records: []
+      logtail:
+        enabled: false
+      unix_socket: /var/run/headscale/headscale.sock
+      unix_socket_permission: "0770"
+  headscale_policy:
+    content: |
+      {"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}
+
+services:
+  headscale:
+    image: headscale/headscale:0.28.0
+    <<: *headscale_mounts
+    command: serve
+    healthcheck:
+      test: [CMD, headscale, health]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      quacktail:
+        aliases: [headscale]
+
+  bootstrap:
+    image: headscale/headscale:0.28.0
+    <<: *headscale_mounts
+    depends_on:
+      headscale:
+        condition: service_healthy
+    volumes:
+      - headscale-data:/var/lib/headscale
+      - headscale-run:/var/run/headscale
+      - quacktail-work:/work
+    environment:
+      <<: *env
+      WORK: /work
+    networks: [quacktail]
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p "$$WORK"
+        headscale users create "$$HEADSCALE_USER" 2>/dev/null || true
+        AUTHKEY=$$(headscale preauthkeys create --reusable --expiration 168h | awk 'NF {k=$$0} END {print k}')
+        [ -n "$$AUTHKEY" ] || { echo "error: failed to create authkey" >&2; exit 1; }
+        printf '%s' "$$AUTHKEY" >"$$WORK/authkey"
+        chmod 600 "$$WORK/authkey"
+
+        cat >"$$WORK/server_setup.sql" <<SQL
+        CALL tailscale_up(
+            hostname => '$$SERVER_HOST',
+            control_url => '$$HEADSCALE_CONTROL_URL',
+            authkey => '$$AUTHKEY',
+            state_dir => '/work/server-tailscale',
+            ephemeral => true
+        );
+
+        CREATE TABLE IF NOT EXISTS e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
+        DELETE FROM e2e_payload;
+        INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
+        SQL
+
+        cat >"$$WORK/server_quack.sql" <<SQL
+        SET extension_directory='/duckdb_extensions';
+        LOAD quack;
+
+        CALL quack_serve(
+            quack_uri(),
+            allow_other_hostname => true,
+            token => quack_token()
+        );
+        SQL
+
+        cat >"$$WORK/client_init.sql" <<SQL
+        SET extension_directory='/duckdb_extensions';
+        LOAD quack;
+
+        CALL tailscale_up(
+            hostname => '$$CLIENT_HOST',
+            control_url => '$$HEADSCALE_CONTROL_URL',
+            authkey => '$$AUTHKEY',
+            state_dir => '/work/client-tailscale',
+            ephemeral => true
+        );
+
+        SELECT 'client_tailscale_up|done';
+        SQL
+
+        ATTACH_URI="quack:$$SERVER_HOST:$$QUACK_PORT"
+
+        cat >"$$WORK/client_attach.sql" <<SQL
+        CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
+        SELECT 'discover_count|' || COUNT(*)::VARCHAR;
+
+        SELECT 'before_quack_query|$$ATTACH_URI';
+
+        SELECT 'quack_query_probe|' || CAST(q AS VARCHAR)
+        FROM quack_query(
+            '$$ATTACH_URI',
+            'SELECT 1 AS q',
+            token => '$$QUACK_TAILNET_TOKEN',
+            disable_ssl => true
+        );
+
+        SELECT 'before_attach|$$ATTACH_URI';
+
+        CREATE SECRET (
+            TYPE quack,
+            TOKEN '$$QUACK_TAILNET_TOKEN',
+            SCOPE '$$ATTACH_URI'
+        );
+
+        ATTACH '$$ATTACH_URI' AS remote (
+            TYPE quack,
+            DISABLE_SSL true
+        );
+
+        SELECT 'after_attach|ok';
+        SQL
+
+        cat >"$$WORK/client_queries.sql" <<SQL
+        INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
+
+        SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
+        SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
+        SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
+        SQL
+
+        echo "bootstrap ok — ATTACH $$ATTACH_URI"
+
+  quacktail-server:
+    <<: *quacktail
+    container_name: quacktail-server
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *env
+      QUACKTAIL_ROLE: server
+    networks:
+      quacktail:
+        aliases: [quacktail-server]
+    restart: unless-stopped
+
+  wait-tailnet:
+    profiles: [test]
+    image: headscale/headscale:0.28.0
+    <<: *headscale_mounts
+    depends_on: [quacktail-server]
+    environment:
+      SERVER_HOST: quacktail-server
+    networks: [quacktail]
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        echo "Waiting for $$SERVER_HOST on tailnet..."
+        for i in $$(seq 1 90); do
+          headscale nodes list 2>/dev/null | grep -Fq "$$SERVER_HOST" && exit 0
+          sleep 2
+        done
+        echo "error: $$SERVER_HOST not registered" >&2
+        headscale nodes list >&2 || true
+        exit 1
+
+  quacktail-client:
+    <<: *quacktail
+    profiles: [test]
+    depends_on:
+      wait-tailnet:
+        condition: service_completed_successfully
+    environment:
+      <<: *env
+      QUACKTAIL_ROLE: client
+    restart: "no"
+
+volumes:
+  headscale-data:
+  headscale-run:
+  quacktail-work:
+
+networks:
+  quacktail:
+    name: quacktail-demo
