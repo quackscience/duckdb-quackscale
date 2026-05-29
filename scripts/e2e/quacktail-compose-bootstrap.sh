@@ -63,6 +63,7 @@ ATTACH '${ATTACH_URI}' AS remote (
     DISABLE_SSL true
 );
 
+DELETE FROM remote.e2e_payload WHERE source = 'client';
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
 
 SELECT
