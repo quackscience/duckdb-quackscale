@@ -33,21 +33,29 @@ Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profil
 **Client** (`docker compose --profile test run --rm quacktail-client`):
 
 ```
-QuackTail cluster demo
-======================
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-→ join tailnet, ATTACH quack:quacktail-server:9494, verify cross-node queries ...
 
-┌─────────┬───────────────────────────────┬──────────────────┬─────────────────────┬────────────┐
-│ status  │          attach_uri           │    server_row    │     client_row      │ total_rows │
-│ PASSED  │ quack:quacktail-server:9494   │ seed-from-server │ insert-from-client  │          2 │
-└─────────┴───────────────────────────────┴──────────────────┴─────────────────────┴────────────┘
+QuackTail cluster demo
+======================
+→ join tailnet as quacktail-client ...
+
+┌─────────┬──────────────────┬───────────────────────────────────┐
+│ running │     hostname     │            tailnet_ips            │
+│ true    │ quacktail-client │ [100.64.0.2, 'fd7a:115c:a1e0::2'] │
+└─────────┴──────────────────┴───────────────────────────────────┘
+
+→ quack_discover() + quack_query probe + ATTACH quack:quacktail-server:9494 ...
+
+┌ ... quack_discover() endpoints on tailnet ... ┐
+┌──────────────┐
+│ probe_result │
+│      1       │
+└──────────────┘
+┌─────────┬ ... ── PASSED: server_row, client_row, total_rows=2 ──┐
 
 ✓ Demo passed — two-node QuackTail cluster is working
 ```
-
-On failure, errors are printed from `/work/client.log` (not swallowed).
 
 That table confirms: tailnet join, `quack_query`, `ATTACH`, read from server, write from client.
 

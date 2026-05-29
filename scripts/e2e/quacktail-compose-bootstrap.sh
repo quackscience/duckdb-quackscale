@@ -24,6 +24,19 @@ ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
 
 write_client_demo_sql() {
   cat >"$WORK/client_demo.sql" <<SQL
+SET extension_directory='/duckdb_extensions';
+LOAD quack;
+
+SELECT * FROM quack_discover();
+
+SELECT q AS probe_result
+FROM quack_query(
+    '${ATTACH_URI}',
+    'SELECT 1 AS q',
+    token => '${QUACK_TOKEN}',
+    disable_ssl => true
+);
+
 CREATE SECRET (
     TYPE quack,
     TOKEN '${QUACK_TOKEN}',
@@ -47,7 +60,7 @@ SQL
 }
 
 if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
-  if [[ ! -f "$WORK/client_demo.sql" ]] || grep -q '_probe' "$WORK/client_demo.sql" 2>/dev/null; then
+  if [[ ! -f "$WORK/client_demo.sql" ]] || ! grep -q 'quack_discover' "$WORK/client_demo.sql" 2>/dev/null; then
     [[ -f "$WORK/client_init.sql" ]] || { echo "error: missing $WORK/client_init.sql" >&2; exit 1; }
     write_client_demo_sql
     echo "✓ demo client SQL ready — ${ATTACH_URI}"

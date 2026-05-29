@@ -33,8 +33,7 @@ quacktail_sql_extension_directory() {
 maybe_compose_bootstrap() {
   [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
   [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_demo.sql" ]] || /usr/local/bin/quacktail-compose-bootstrap.sh
-  # Refresh demo SQL if an older version with streaming CTAS probes is on the volume.
-  if [[ -f "${WORK}/client_demo.sql" ]] && grep -q '_probe' "${WORK}/client_demo.sql" 2>/dev/null; then
+  if [[ -f "${WORK}/client_demo.sql" ]] && ! grep -q 'quack_discover' "${WORK}/client_demo.sql" 2>/dev/null; then
     /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
 }
@@ -106,22 +105,29 @@ run_client_verbose() {
     -init "${WORK}/client_init.sql" -batch -echo
 }
 
-# Print the last DuckDB ASCII result table from captured output.
-print_last_duckdb_table() {
+# Print every DuckDB ASCII result table from captured output.
+print_duckdb_tables() {
   local out="${1:?output file}"
   awk '
-    /^┌/ { table = $0 ORS; in_table = 1; next }
+    /^┌/ {
+      if (table != "") {
+        printf "%s", table
+      }
+      table = $0 ORS
+      in_table = 1
+      next
+    }
     in_table {
       table = table $0 ORS
       if (/^└/) {
-        last = table
-        in_table = 0
+        printf "%s", table
         table = ""
+        in_table = 0
       }
     }
     END {
-      if (last != "") {
-        printf "%s", last
+      if (table != "") {
+        printf "%s", table
       }
     }
   ' "$out"
@@ -129,7 +135,7 @@ print_last_duckdb_table() {
 
 ensure_client_demo_sql() {
   local demo_sql="${WORK}/client_demo.sql"
-  if [[ -f "$demo_sql" ]] && ! grep -q '_probe' "$demo_sql" 2>/dev/null; then
+  if [[ -f "$demo_sql" ]] && grep -q 'quack_discover' "$demo_sql" 2>/dev/null; then
     return 0
   fi
   if [[ -f "${WORK}/client_init.sql" ]]; then
@@ -145,7 +151,8 @@ run_client_demo() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri="quack:${SERVER_HOST}:${PORT}"
   local demo_sql="${WORK}/client_demo.sql"
-  local out="${WORK}/client.out"
+  local join_out="${WORK}/client_join.out"
+  local demo_out="${WORK}/client.out"
   local log="${WORK}/client.log"
 
   ensure_client_demo_sql
@@ -156,30 +163,38 @@ run_client_demo() {
 
   ensure_quack
 
-  echo "→ join tailnet, ATTACH ${attach_uri}, verify cross-node queries ..."
+  echo "→ join tailnet as ${CLIENT_HOST} ..."
   echo ""
+  if ! "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
+    -init "${WORK}/client_init.sql" >"$join_out" 2>"$log"; then
+    echo "error: tailnet join failed" >&2
+    tail -20 "$log" >&2
+    exit 1
+  fi
+  print_duckdb_tables "$join_out"
 
+  echo "→ quack_discover() + quack_query probe + ATTACH ${attach_uri} ..."
+  echo ""
   if ! cat "$demo_sql" | "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    -init "${WORK}/client_init.sql" >"$out" 2>"$log"; then
+    >"$demo_out" 2>>"$log"; then
     echo "error: client demo failed" >&2
     if [[ -s "$log" ]]; then
       echo "--- log ---" >&2
       tail -40 "$log" >&2
     fi
-    if [[ -s "$out" ]]; then
+    if [[ -s "$demo_out" ]]; then
       echo "--- output ---" >&2
-      tail -40 "$out" >&2
+      tail -40 "$demo_out" >&2
     fi
     exit 1
   fi
 
-  if grep -q "PASSED" "$out" 2>/dev/null; then
-    print_last_duckdb_table "$out"
-  else
-    echo "warn: expected PASSED row missing; raw tail of output:" >&2
-    tail -20 "$out"
+  print_duckdb_tables "$demo_out"
+
+  if ! grep -q "PASSED" "$demo_out" 2>/dev/null; then
+    echo "error: expected PASSED row missing" >&2
+    exit 1
   fi
-  echo ""
   echo "✓ Demo passed — two-node QuackTail cluster is working"
 }
 
