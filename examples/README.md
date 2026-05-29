@@ -2,7 +2,7 @@
 
 Two-node **Headscale + QuackTail** cluster on Linux — server and client DuckDB nodes on a shared tailnet, client `ATTACH`es the server's Quack endpoint.
 
-The image uses the latest GitHub **release** by default (`BUILD_FROM_SOURCE=0`). For unreleased APIs (`tailscale_quack_proxy`, etc.) set `BUILD_FROM_SOURCE=1` when building compose images.
+The image builds DuckDB + quackscale from this repo by default (`BUILD_FROM_SOURCE=1`). Set `BUILD_FROM_SOURCE=0` to use the latest GitHub release binary instead.
 
 **Requires:** Linux, Docker Compose v2, `/dev/net/tun`, outbound HTTPS.
 
@@ -13,7 +13,6 @@ The image uses the latest GitHub **release** by default (`BUILD_FROM_SOURCE=0`).
 ```bash
 git pull && cd examples
 docker compose build quacktail-server quacktail-client
-# For latest extension (tailscale_quack_proxy): BUILD_FROM_SOURCE=1 docker compose build ...
 docker compose up -d --force-recreate headscale quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```

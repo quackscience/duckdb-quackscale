@@ -9,3 +9,5 @@ test/python/__pycache__/
 scripts/lib/__pycache__/
 .Rhistory
 .e2e-work/
+examples/headscale/demo.authkey
+.env

@@ -1,0 +1,4 @@
+# Copy reusable Headscale preauth key from the running compose stack (one-time):
+#   docker exec quacktail-server cat /work/authkey > examples/headscale/demo.authkey
+#
+# This is NOT the Quack token (quackscale-demo-token). It is the Headscale join key.

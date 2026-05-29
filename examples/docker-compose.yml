@@ -45,7 +45,7 @@ x-quacktail: &quacktail
     context: ..
     dockerfile: examples/Dockerfile
     args:
-      BUILD_FROM_SOURCE: ${BUILD_FROM_SOURCE:-0}
+      BUILD_FROM_SOURCE: ${BUILD_FROM_SOURCE:-1}
       GITHUB_REPO: ${GITHUB_REPO:-quackscience/duckdb-quackscale}
   cap_add: [NET_ADMIN]
   devices: [/dev/net/tun]

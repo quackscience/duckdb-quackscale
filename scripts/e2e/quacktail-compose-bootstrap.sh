@@ -356,6 +356,18 @@ fi
 printf '%s' "$AUTHKEY" >"$WORK/authkey"
 chmod 600 "$WORK/authkey"
 
+cat >"$WORK/demo.env" <<ENV
+# QuackTail demo credentials (examples/docker-compose.yml defaults)
+QUACK_TAILNET_TOKEN=${QUACK_TOKEN}
+HEADSCALE_USER=${HS_USER}
+HEADSCALE_CONTROL_URL=${CONTROL_URL}
+SERVER_HOST=${SERVER_HOST}
+QUACK_PORT=${QUACK_PORT}
+QUACK_FORWARD_LOCAL_PORT=${QUACK_FORWARD_LOCAL_PORT:-19494}
+HEADSCALE_AUTHKEY=${AUTHKEY}
+ENV
+chmod 600 "$WORK/demo.env"
+
 cat >"$WORK/server_setup.sql" <<SQL
 CALL tailscale_up(
     hostname => '${SERVER_HOST}',
