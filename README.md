@@ -39,7 +39,7 @@ export TS_AUTHKEY='tskey-auth-...'   # Tailscale — separate secret
 ## Prerequisites
 
 - C++17 toolchain, `cmake`, `make` (or `ninja` + `ccache`)
-- **Go 1.22+** with CGO (for libtailscale)
+- **Go 1.25+** with CGO (for libtailscale; CMake bootstraps Go 1.25.5 automatically if the host toolchain is older)
 - DuckDB with core **`quack`** extension (e.g. v1.5.3+)
 - Git submodules: `duckdb`, `extension-ci-tools`, `third_party/libtailscale`
 
