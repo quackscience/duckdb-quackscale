@@ -54,7 +54,6 @@ jobs:
       - name: Run Headscale smoke test
         env:
           HEADSCALE_ALREADY_RUNNING: "1"
-          QUACKSCALE_TAILSCALE_UP_NAMED: "1"
         run: |
           chmod +x scripts/ci_headscale_smoke.sh scripts/lib/headscale_ci.sh
           ./scripts/ci_headscale_smoke.sh

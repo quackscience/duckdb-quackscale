@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Two-node QuackTail e2e over Headscale.
-# QuackTail (quackscale) is built into the release DuckDB — never LOAD quackscale.
+# Two-node QuackTail e2e over Headscale (DuckDB + quackscale linked from source build).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -123,14 +122,18 @@ fi
 export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
 # Server bootstrap: tailnet only (quack is loaded later for quack_serve).
-{
-  headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
-  cat <<SQL
+cat >"$WORK/server_bootstrap.sql" <<SQL
+CALL tailscale_up(
+    hostname => '${SERVER_HOST}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${AUTHKEY}',
+    state_dir => '${SERVER_STATE}',
+    ephemeral => true
+);
 
 CREATE TABLE e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
 INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
 SQL
-} >"$WORK/server_bootstrap.sql"
 
 e2e_run_duckdb "Joining server to Headscale (blocking)" "$SERVER_DB" "$WORK/server_bootstrap.sql" "$SERVER_LOG"
 
@@ -144,13 +147,16 @@ else
   exit 1
 fi
 
-{
-  cat <<SQL
+cat >"$WORK/server_serve.sql" <<SQL
 LOAD quack;
 
-SQL
-  headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
-  cat <<SQL
+CALL tailscale_up(
+    hostname => '${SERVER_HOST}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${AUTHKEY}',
+    state_dir => '${SERVER_STATE}',
+    ephemeral => true
+);
 
 CALL quack_serve(
     quack_uri(),
@@ -158,7 +164,6 @@ CALL quack_serve(
     token => quack_token()
 );
 SQL
-} >"$WORK/server_serve.sql"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
@@ -179,13 +184,16 @@ echo "Waiting for Quack listener on ${SERVER_IP}:${QUACK_PORT} ..."
 headscale_ci_wait_tcp "$SERVER_IP" "$QUACK_PORT"
 echo "Quack listener is reachable on ${SERVER_IP}:${QUACK_PORT}"
 
-{
-  cat <<SQL
+cat >"$WORK/client.sql" <<SQL
 LOAD quack;
 
-SQL
-  headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CLIENT_STATE" "$AUTHKEY"
-  cat <<SQL
+CALL tailscale_up(
+    hostname => '${CLIENT_HOST}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${AUTHKEY}',
+    state_dir => '${CLIENT_STATE}',
+    ephemeral => true
+);
 
 CREATE SECRET (
     TYPE quack,

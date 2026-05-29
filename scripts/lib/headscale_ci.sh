@@ -375,35 +375,3 @@ PY
   echo "error: $host:$port not reachable" >&2
   return 1
 }
-
-# Emit CALL tailscale_up(...) for DuckDB.
-# Release binaries built before quackscale 2026-05 require hostname as the first positional
-# VARCHAR; set QUACKSCALE_TAILSCALE_UP_NAMED=1 when using a build with named-only hostname.
-headscale_ci_sql_tailscale_up() {
-  local hostname="$1"
-  local state_dir="$2"
-  local authkey="$3"
-  local control_url="${4:-$HEADSCALE_CONTROL_URL}"
-
-  if [[ "${QUACKSCALE_TAILSCALE_UP_NAMED:-}" == "1" ]]; then
-    cat <<SQL
-CALL tailscale_up(
-    hostname => '${hostname}',
-    control_url => '${control_url}',
-    authkey => '${authkey}',
-    state_dir => '${state_dir}',
-    ephemeral => true
-);
-SQL
-  else
-    cat <<SQL
-CALL tailscale_up(
-    '${hostname}',
-    control_url => '${control_url}',
-    authkey => '${authkey}',
-    state_dir => '${state_dir}',
-    ephemeral => true
-);
-SQL
-  fi
-}
