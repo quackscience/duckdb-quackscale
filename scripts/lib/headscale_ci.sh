@@ -269,8 +269,9 @@ headscale_ci_verify_tailscale_client() {
 
 headscale_ci_node_ipv4() {
   local hostname="${1:?node hostname}"
+  local max_attempts="${2:-${HEADSCALE_NODE_WAIT_ATTEMPTS:-90}}"
   local attempt=0
-  while (( attempt < 90 )); do
+  while (( attempt < max_attempts )); do
     attempt=$((attempt + 1))
     local nodes_json ip
     nodes_json="$(headscale_ci_exec headscale nodes list -o json 2>/dev/null || true)"

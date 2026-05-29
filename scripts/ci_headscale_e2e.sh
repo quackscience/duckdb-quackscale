@@ -174,22 +174,8 @@ SQL
   headscale_ci_sql_quack_serve "$QUACK_PORT"
 } >"$WORK/server_serve.sql"
 
-echo "Resolving server tailnet IP (for logs; same-host CI ATTACH uses localhost) ..."
-SERVER_IP=""
-if SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST")"; then
-  echo "Server tailnet IP (from Headscale): $SERVER_IP"
-else
-  echo "error: could not determine server tailnet IP" >&2
-  headscale_ci_logs
-  exit 1
-fi
-SERVER_DNS="$(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
-SERVER_QUACK_URI_DNS="$(headscale_ci_quack_client_uri "$SERVER_HOST" "$QUACK_PORT")"
-SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
-echo "Server MagicDNS name (Headscale): ${SERVER_DNS}"
+SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "0.0.0.0" "$QUACK_PORT")"
 echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI}"
-echo "  (same-runner CI: localhost + quack on 0.0.0.0; E2E_QUACK_ATTACH_HOST=tailnet when tailscale_listen exists)"
-echo "Tailnet ATTACH (needs tailscale_listen bridge): $(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
@@ -200,6 +186,17 @@ SERVER_PID=$!
 
 sleep 2
 e2e_wait_for_quack_server
+
+echo "Resolving server tailnet IP from Headscale (after server joined) ..."
+SERVER_IP=""
+if SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 30)"; then
+  echo "Server tailnet IP: ${SERVER_IP}"
+  echo "Server MagicDNS name: $(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
+  echo "Tailnet ATTACH (needs tailscale_listen bridge): $(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
+else
+  echo "warn: server tailnet IP not resolved (localhost ATTACH unaffected)" >&2
+fi
+
 echo "Client will ATTACH: ${SERVER_QUACK_URI}"
 
 {
