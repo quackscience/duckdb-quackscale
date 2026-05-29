@@ -1,6 +1,6 @@
 # QuackScale
 
-DuckDB community extension that joins a [Tailscale](https://tailscale.com) tailnet and exposes the [Quack](https://duckdb.org/docs/current/quack/overview) remote protocol on tailnet addresses — so DuckDB peers can `ATTACH` and query each other over HTTP on port **9494** without the public internet.
+DuckDB community extension that joins a [Tailscale](https://tailscale.com) tailnet and exposes the [Quack](https://duckdb.org/docs/current/quack/overview) remote protocol on tailnet addresses — so DuckDB peers can `ATTACH` and query each other over easily and securely.
 
 **QuackTail** = DuckDB + `quack` (core) + `quackscale` (this extension) on the same tailnet.
 
