@@ -126,14 +126,17 @@ refresh_client_sql() {
   write_client_quack_sql "$attach_uri"
   write_client_attach_sql "$attach_uri"
   write_client_queries_sql
+  printf '%s' "$attach_uri" >"$WORK/attach_uri"
 }
 
 if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
   AUTHKEY="$(cat "$WORK/authkey")"
   if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
     || [[ ! -f "$WORK/client_quack.sql" ]] \
-    || grep -q 'NOT EXISTS' "$WORK/client_quack.sql" 2>/dev/null \
-    || ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql" 2>/dev/null; then
+    || [[ ! -f "$WORK/client_init.sql" ]] \
+    || [[ -f "$WORK/client_demo.sql" && ! -f "$WORK/client_quack.sql" ]] \
+    || { [[ -f "$WORK/client_quack.sql" ]] && grep -q 'NOT EXISTS' "$WORK/client_quack.sql"; } \
+    || { [[ -f "$WORK/client_init.sql" ]] && ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"
   fi

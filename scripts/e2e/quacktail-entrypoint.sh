@@ -139,21 +139,37 @@ ensure_client_sql() {
   fi
   COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   if [[ ! -f "${WORK}/client_quack.sql" ]] || [[ ! -f "${WORK}/client_init.sql" ]]; then
-    echo "error: client SQL not generated" >&2
+    echo "error: client SQL not generated (expected ${WORK}/client_quack.sql)" >&2
     exit 1
   fi
+}
+
+client_attach_uri() {
+  if [[ -n "${QUACKTAIL_ATTACH_URI:-}" ]]; then
+    echo "$QUACKTAIL_ATTACH_URI"
+    return
+  fi
+  if [[ -f "${WORK}/attach_uri" ]]; then
+    cat "${WORK}/attach_uri"
+    return
+  fi
+  grep -E "^ATTACH '" "${WORK}/client_quack.sql" | head -1 | sed -E "s/^ATTACH '([^']+)'.*/\1/"
 }
 
 run_client_demo() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri
-  attach_uri="$(grep -E "^ATTACH '" "${WORK}/client_quack.sql" | head -1 | sed -E "s/^ATTACH '([^']+)'.*/\1/")"
   local combined_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
   local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-300}"
   local duckdb_rc=0
 
   ensure_client_sql
+  attach_uri="$(client_attach_uri)"
+  if [[ -z "$attach_uri" ]]; then
+    echo "error: could not determine Quack ATTACH URI" >&2
+    exit 1
+  fi
 
   echo ""
   echo "QuackTail cluster demo"
