@@ -40,7 +40,7 @@ index 2238212..4a114e2 100644
  	"unsafe"
  
  	"golang.org/x/sys/unix"
-@@ -621,3 +622,44 @@ func TsnetEnableFunnelToLocalhostPlaintextHttp1(sd C.int, localhostPort C.int) C
+@@ -621,3 +622,67 @@ func TsnetEnableFunnelToLocalhostPlaintextHttp1(sd C.int, localhostPort C.int) C
  
  	return 0
  }
