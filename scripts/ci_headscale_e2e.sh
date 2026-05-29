@@ -91,9 +91,19 @@ INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
 SQL
 } >"$WORK/server_setup.sql"
 
+{
+  cat <<SQL
+LOAD quack;
+
+SQL
+  headscale_ci_sql_quack_serve "$QUACK_PORT"
+} >"$WORK/server_quack.sql"
+
 echo "=== Starting QuackTail server container ($SERVER_HOST) ==="
-echo "--- SQL: server_setup.sql ---"
+echo "--- SQL: server_setup.sql + server_quack.sql → server_init.sql (in container) ---"
 cat "$WORK/server_setup.sql"
+echo "--- server_quack.sql ---"
+cat "$WORK/server_quack.sql"
 quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
 quacktail_ci_wait_server "$QUACK_PORT"
 

@@ -9,7 +9,7 @@ Same pattern as Headscale and Tailscale verify in CI:
 | Component | How it runs |
 |-----------|-------------|
 | Headscale | Official `docker.io/headscale/headscale:0.28.0` on network `quacktail-ci` |
-| QuackTail **server** | `quacktail-ci:e2e` container — `tailscale_up`, seed data, foreground `quack_serve` |
+| QuackTail **server** | `quacktail-ci:e2e` container — `sleep infinity \| duckdb -init` ([duckdb-quack-infra](https://github.com/duckdb/duckdb-quack-infra) pattern) |
 | QuackTail **client** | `quacktail-ci:e2e` container — `tailscale_up`, `ATTACH` over **tailnet IP**, INSERT/SELECT |
 
 The release DuckDB binary is bind-mounted into both containers. The image only adds Ubuntu, `curl`, `tini`, and the entrypoint script.
