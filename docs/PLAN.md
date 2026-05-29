@@ -114,7 +114,8 @@ Planned:
 - `tailscale_down()` — `tailscale_close`
 - `quack_serve_on_tailnet(port, ...)` — orchestrate Quack when `quack` is loaded
 - Settings: default port, auto-load `quack`, state directory
-- Integration test with headscale/tailscale test control (see libtailscale `tstestcontrol`)
+- [x] Headscale CI smoke (`scripts/ci_headscale_smoke.sh`, `.github/workflows/headscale-integration.yml`)
+- [ ] Two-node QuackTail e2e over Headscale (client `ATTACH` + `quack_query`)
 
 ## Repository layout
 

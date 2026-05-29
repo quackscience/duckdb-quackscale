@@ -1,0 +1,10 @@
+{
+  // Permissive policy for local CI / lab Headscale only.
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ]
+}

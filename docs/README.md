@@ -4,8 +4,9 @@
 
 1. **[../README.md](../README.md)** — build, quick start, SQL reference  
 2. **[AUTHENTICATION.md](AUTHENTICATION.md)** — Tailscale (`TS_AUTHKEY`, `tailscale_up`, browser login)  
-3. **[QUACK_AUTH.md](QUACK_AUTH.md)** — Quack tokens for QuackTail (`QUACK_TAILNET_TOKEN`, shared secrets, auth macros)  
-4. **[PLAN.md](PLAN.md)** — architecture, API roadmap, risks  
+3. **[HEADSCALE.md](HEADSCALE.md)** — self-hosted [Headscale](https://github.com/juanfont/headscale) (`control_url`, preauth keys)  
+4. **[QUACK_AUTH.md](QUACK_AUTH.md)** — Quack tokens for QuackTail (`QUACK_TAILNET_TOKEN`, shared secrets, auth macros)  
+5. **[PLAN.md](PLAN.md)** — architecture, API roadmap, risks  
 
 ## QuackTail authentication at a glance
 

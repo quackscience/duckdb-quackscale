@@ -16,7 +16,8 @@ LOAD quackscale;  -- tailscale_up, quack_uri, quack_token, ...
 | Doc | Contents |
 |-----|----------|
 | [docs/PLAN.md](docs/PLAN.md) | Architecture, roadmap, risks |
-| [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | **Tailscale** — auth keys, browser login, `TS_AUTHKEY`, CI test control |
+| [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | **Tailscale** — auth keys, browser login, `TS_AUTHKEY` |
+| [docs/HEADSCALE.md](docs/HEADSCALE.md) | **Headscale** — self-hosted control plane (`control_url`, preauth keys) |
 | [docs/QUACK_AUTH.md](docs/QUACK_AUTH.md) | **Quack** — shared tokens, env provisioning, overriding `quack_authentication_function` |
 
 ## Authentication (two layers)
@@ -25,7 +26,8 @@ QuackTail uses **two separate** credential systems. Both are required in product
 
 | Layer | Question | Provisioned via | QuackScale / Quack |
 |-------|----------|-----------------|-------------------|
-| **Tailscale** | Is this process on our tailnet? | `TS_AUTHKEY`, `CALL tailscale_up`, or browser login | `tailscale_*` SQL — see [AUTHENTICATION.md](docs/AUTHENTICATION.md) |
+| **Tailscale** | Is this process on our tailnet? | `TS_AUTHKEY`, `CALL tailscale_up`, or browser login | `tailscale_*` SQL — [AUTHENTICATION.md](docs/AUTHENTICATION.md) |
+| **Headscale** (optional) | Same, self-hosted control server | `control_url` + Headscale preauth key | Same SQL — [HEADSCALE.md](docs/HEADSCALE.md) |
 | **Quack** | May this caller run SQL on this server? | Shared env token, DuckDB secrets, or custom auth macro | `quack_token()`, `quack_serve(token => ...)`, `CREATE SECRET` — see [QUACK_AUTH.md](docs/QUACK_AUTH.md) |
 
 **Do not** copy the random `auth_token` column from each `CALL quack_serve` by hand. For a fleet of servers and clients, use a **network-wide shared token** (or allowlist) as described in [Quack security — Overriding authentication](https://duckdb.org/docs/current/quack/security#overriding-authentication).
@@ -133,6 +135,21 @@ Use the hostname from `tailscale_up(hostname => ...)` and Quack’s default port
 
 See [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md).
 
+### Headscale (self-hosted tailnet)
+
+[Headscale](https://github.com/juanfont/headscale) is API-compatible with Tailscale’s control server — no extra QuackScale APIs:
+
+```sql
+CALL tailscale_up(
+    hostname => 'my-duckdb-node',
+    control_url => 'https://headscale.example.com',
+    authkey => '<headscale preauth key>',
+    state_dir => '~/.local/share/duckdb/quackscale'
+);
+```
+
+Example: [examples/headscale_quacktail.sql](examples/headscale_quacktail.sql). CI runs [`.github/workflows/headscale-integration.yml`](.github/workflows/headscale-integration.yml).
+
 ### Quack auth modes (pick one)
 
 | Mode | When | How |
@@ -172,7 +189,9 @@ Core Quack (`LOAD quack`): `quack_serve`, `quack_stop`, `ATTACH`, `quack_query`,
 make test
 ```
 
-SQL tests do not require a live tailnet or `QUACK_TAILNET_TOKEN`.
+SQL unit tests do not require a live tailnet or `QUACK_TAILNET_TOKEN`.
+
+Optional integration (Docker + Headscale): `./scripts/ci_headscale_smoke.sh` after `make release`.
 
 ## Based on
 

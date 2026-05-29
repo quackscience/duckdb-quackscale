@@ -36,7 +36,8 @@ QuackScale embeds [libtailscale](https://github.com/tailscale/libtailscale) (Go 
 | **Auth key** | `authkey` in `CALL tailscale_up`, or `TS_AUTHKEY` env | Servers, CI, automation |
 | **Persisted state** | `state_dir` — keys on disk after first login | Laptops, repeat use |
 | **Interactive login** | Login URL in logs; open in browser | First-time dev setup |
-| **Test control** | `control_url` → [tstestcontrol](https://github.com/tailscale/libtailscale/tree/main/tstestcontrol) | CI without a real tailnet |
+| **Headscale** | `control_url` → your [Headscale](https://github.com/juanfont/headscale) URL + Headscale preauth key | Self-hosted tailnet (Tailscale-compatible) |
+| **Test control** | `control_url` → [tstestcontrol](https://github.com/tailscale/libtailscale/tree/main/tstestcontrol) | libtailscale unit tests |
 
 The libtailscale C API exposes `tailscale_set_authkey`, `tailscale_set_dir`, `tailscale_set_control_url`, `tailscale_set_logfd`, and `tailscale_up`. There is no C API that returns a login URL directly — tsnet prints `https://login.tailscale.com/a/…` on the **log stream** (see [libtailscale Python README](https://github.com/tailscale/libtailscale/blob/main/python/README.md)).
 
@@ -85,14 +86,27 @@ Open `login_url` in a browser and approve the device. tsnet may also print the s
 
 After the first login, reuse `state_dir`; later `CALL tailscale_up()` usually needs no browser.
 
-### CI / tests — tstestcontrol
+### Self-hosted — Headscale
 
-libtailscale includes a **local test control plane** (no Tailscale account):
+[Headscale](https://github.com/juanfont/headscale) implements the Tailscale control server API. QuackScale uses the same knobs as the Tailscale CLI:
 
-- **`tstestcontrol`**: `run_control()` → ephemeral control server URL; set `control_url` on tsnet.
-- **`tsnetctest`**: two-node dial/accept test used by `go test`.
+```sql
+CALL tailscale_up(
+    hostname => 'my-node',
+    control_url => 'https://headscale.example.com',
+    authkey => '<headscale preauth key>',
+    state_dir => '/var/lib/duckdb/headscale-state'
+);
+```
 
-QuackScale CI runs `go test` in `third_party/libtailscale` (`.github/workflows/libtailscale-integration.yml`).
+Create keys with `headscale preauthkeys create`. Full walkthrough: **[HEADSCALE.md](HEADSCALE.md)** and [examples/headscale_quacktail.sql](../examples/headscale_quacktail.sql).
+
+### CI / tests
+
+| Workflow | Control plane |
+|----------|----------------|
+| [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | Docker Headscale + `CALL tailscale_up` |
+| [libtailscale-integration.yml](../.github/workflows/libtailscale-integration.yml) | libtailscale `tstestcontrol` (`go test`) |
 
 ## SQL surface (Tailscale only)
 
@@ -123,5 +137,7 @@ Invoke with **`CALL`**, like Quack:
 ## Related reading
 
 - [QUACK_AUTH.md](QUACK_AUTH.md) — Quack / QuackTail application tokens
+- [HEADSCALE.md](HEADSCALE.md) — self-hosted Headscale
 - [libtailscale](https://github.com/tailscale/libtailscale)
+- [Headscale](https://github.com/juanfont/headscale)
 - [Tailscale auth keys](https://tailscale.com/kb/1085/auth-keys)
