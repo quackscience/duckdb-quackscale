@@ -94,6 +94,8 @@ services:
     image: headscale/headscale:0.28.0
     <<: *headscale_mounts
     command: serve
+    ports:
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: [CMD, headscale, health]
       interval: 5s

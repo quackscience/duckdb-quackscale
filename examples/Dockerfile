@@ -7,7 +7,7 @@ ARG GITHUB_REPO=quackscience/duckdb-quackscale
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tini python3 stdbuf \
+    && apt-get install -y --no-install-recommends ca-certificates curl tini python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/ci_download_release_duckdb.sh /tmp/ci_download_release_duckdb.sh
