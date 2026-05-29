@@ -2,11 +2,11 @@
 # Build from repo root: docker build -f examples/Dockerfile -t quacktail:local .
 #
 # BUILD_FROM_SOURCE=1 (default in compose): build DuckDB + quackscale from this repo.
-# BUILD_FROM_SOURCE=0: pull pinned GitHub release binary (QUACKTAIL_RELEASE_TAG, default v1.0.3).
+# BUILD_FROM_SOURCE=0: pull pinned GitHub release binary (QUACKTAIL_RELEASE_TAG, default v1.0.2).
 
 ARG BUILD_FROM_SOURCE=1
 ARG GITHUB_REPO=quackscience/duckdb-quackscale
-ARG QUACKTAIL_RELEASE_TAG=v1.0.3
+ARG QUACKTAIL_RELEASE_TAG=v1.0.2
 ARG HEADSCALE_VERSION=0.28.0
 ARG TARGETARCH
 
