@@ -1,9 +1,12 @@
-# QuackTail + Headscale — three services only: headscale, quacktail-server, quacktail-client.
+# QuackTail + Headscale — headscale, quacktail-server, quacktail-client (+ optional tailscale-probe).
 # If you see bootstrap or wait-tailnet containers, reset: git pull && docker compose down --remove-orphans -v
 #
 #   cd examples
 #   docker compose up -d headscale quacktail-server
 #   docker compose --profile test run --rm quacktail-client
+#
+# Vanilla Tailscale probe (no DuckDB — isolates tailnet vs tsnet-in-DuckDB):
+#   docker compose --profile debug run --rm tailscale-probe
 #
 # One-liner:
 #   docker compose up -d headscale quacktail-server && \
@@ -154,6 +157,25 @@ services:
       QUACKTAIL_ROLE: client
       QUACKTAIL_WAIT_SERVER: quacktail-server
       HEADSCALE_CONFIG: /etc/headscale/config.yaml
+    restart: "no"
+
+  tailscale-probe:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile.tailscale-probe
+    profiles: [debug]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    depends_on:
+      quacktail-server:
+        condition: service_healthy
+    environment:
+      <<: *env
+      QUACKTAIL_WORK: /work
+      TAILSCALE_PROBE_HOSTNAME: tailscale-probe
+    volumes:
+      - quacktail-work:/work
+    networks: [quacktail]
     restart: "no"
 
 volumes:

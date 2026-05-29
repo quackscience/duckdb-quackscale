@@ -37,7 +37,7 @@ docker compose --profile test run --rm quacktail-client
 
 You should see one line `→ join tailnet, ATTACH quack:quacktail-server:9494, verify ...` (not two separate join/ATTACH steps). If you still see the old two-step messages, the client image was not rebuilt.
 
-Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profile only).
+Core services: `headscale`, `quacktail-server`, `quacktail-client` (test profile). Optional `tailscale-probe` (debug profile) uses **vanilla** `tailscale/tailscale` — no DuckDB — to test ping + TCP to `quacktail-server:9494`.
 
 ## Expected output
 
@@ -134,6 +134,17 @@ docker compose --profile test down --remove-orphans -v
 ```
 
 ## Troubleshooting
+
+**Is it tailnet or DuckDB?** Run the vanilla Tailscale probe while the server is up:
+
+```bash
+docker compose build tailscale-probe
+docker compose --profile debug run --rm tailscale-probe
+```
+
+- Probe **passes**, client **fails** → tailnet + Quack port work; issue is DuckDB tsnet or Quack `ATTACH`.
+- Probe **ping fails** → Headscale / DERP / routing — not DuckDB-specific.
+- Probe **ping OK, TCP/HTTP to :9494 fails** → `tailscale_serve_local` / `quack_serve` on the server.
 
 **Stale `bootstrap` / `wait-tailnet` containers** — old compose file; run `git pull`, then `docker compose down --remove-orphans -v` and rebuild.
 
