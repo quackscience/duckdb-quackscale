@@ -364,6 +364,36 @@ finally:
 PY
 }
 
+# Quack is HTTP; localhost bind may listen on ::1 only — try several addresses and HTTP.
+headscale_ci_quack_port_open() {
+  local port="${1:?port}"
+  local host
+  for host in 127.0.0.1 localhost ::1; do
+    if headscale_ci_tcp_reachable "$host" "$port" 2>/dev/null; then
+      echo "Quack TCP open: ${host}:${port}"
+      return 0
+    fi
+  done
+  python3 - "$port" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+port = sys.argv[1]
+for host in ("127.0.0.1", "localhost", "[::1]"):
+    for path in ("/", "/quack"):
+        url = f"http://{host}:{port}{path}"
+        try:
+            urllib.request.urlopen(url, timeout=2)
+        except urllib.error.HTTPError:
+            print(f"Quack HTTP open: {url}", flush=True)
+            sys.exit(0)
+        except OSError:
+            continue
+sys.exit(1)
+PY
+}
+
 headscale_ci_wait_tcp() {
   local host="${1:?host}"
   local port="${2:?port}"
@@ -419,19 +449,19 @@ headscale_ci_quack_uri_for_ip() {
   echo "quack:${ip}:${port}"
 }
 
-# Docs canonical local form (port 9494 is implicit).
+# Local CI form — explicit IPv4 avoids localhost IPv4/IPv6 bind mismatches (Quack docs).
 headscale_ci_quack_uri_local() {
-  echo "quack:localhost"
+  echo "quack:127.0.0.1"
 }
 
 # Client ATTACH URI for e2e. Same-host CI uses localhost (plain HTTP, no DISABLE_SSL).
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
-  local attach_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
+  local attach_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
   if [[ "$attach_host" == "tailnet" ]]; then
     headscale_ci_quack_uri_for_ip "$server_ip" "$port"
-  elif [[ "$attach_host" == "localhost" ]]; then
+  elif [[ "$attach_host" == "localhost" || "$attach_host" == "127.0.0.1" ]]; then
     headscale_ci_quack_uri_local
   else
     headscale_ci_quack_uri_for_ip "$attach_host" "$port"
@@ -443,10 +473,14 @@ headscale_ci_e2e_quack_secret_scope() {
   headscale_ci_e2e_quack_attach_uri "$@"
 }
 
-# Server bind URI. CI same-host: quack:localhost. Tailnet/production: 0.0.0.0 + allow_other_hostname.
+# Server bind URI. CI same-host default: 0.0.0.0 (reachable via 127.0.0.1 ATTACH).
+# Tailnet/production: 0.0.0.0 + allow_other_hostname. Explicit 127.0.0.1 also supported.
 headscale_ci_sql_quack_serve() {
   local port="${1:-9494}"
-  local bind_host="${E2E_QUACK_BIND_HOST:-localhost}"
+  local bind_host="${E2E_QUACK_BIND_HOST:-0.0.0.0}"
+  if [[ "$bind_host" == "localhost" ]]; then
+    bind_host="127.0.0.1"
+  fi
   if [[ "$bind_host" == "0.0.0.0" || "$bind_host" == "tailnet" ]]; then
     cat <<SQL
 CALL quack_serve(
@@ -455,10 +489,18 @@ CALL quack_serve(
     token => quack_token()
 );
 SQL
+  elif [[ "$bind_host" == "127.0.0.1" || "$bind_host" == "::1" ]]; then
+    cat <<SQL
+CALL quack_serve(
+    'quack:${bind_host}',
+    token => quack_token()
+);
+SQL
   else
     cat <<SQL
 CALL quack_serve(
-    'quack:localhost',
+    'quack:${bind_host}:${port}',
+    allow_other_hostname => true,
     token => quack_token()
 );
 SQL

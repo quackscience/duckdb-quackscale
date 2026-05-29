@@ -94,6 +94,8 @@ jobs:
           HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
           SKIP_HEADSCALE_VERIFY: "1"
           HEADSCALE_ALREADY_RUNNING: "1"
+          E2E_QUACK_BIND_HOST: "0.0.0.0"
+          E2E_QUACK_ATTACH_HOST: "127.0.0.1"
         run: |
           chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh scripts/lib/run_e2e_server.py
           ./scripts/ci_headscale_e2e.sh

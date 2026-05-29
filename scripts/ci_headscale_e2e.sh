@@ -13,6 +13,9 @@ QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-e2e-shared-token}"
 SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
+# Bind all interfaces; client ATTACH uses quack:127.0.0.1 (avoids localhost IPv6-only listen).
+export E2E_QUACK_BIND_HOST="${E2E_QUACK_BIND_HOST:-0.0.0.0}"
+export E2E_QUACK_ATTACH_HOST="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
 CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-120}"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
@@ -65,28 +68,16 @@ e2e_assert_server_alive() {
     tail -80 "$SERVER_LOG" >&2 || true
     return 1
   fi
-  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
-  if [[ "$wait_host" == "tailnet" ]]; then
-    wait_host="${SERVER_IP:-127.0.0.1}"
-  elif [[ "$wait_host" == "localhost" ]]; then
-    wait_host="127.0.0.1"
-  fi
-  if ! headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
-    echo "error: Quack not reachable on ${wait_host}:${QUACK_PORT} ($label)" >&2
+  if ! headscale_ci_quack_port_open "$QUACK_PORT"; then
+    echo "error: Quack not reachable on port ${QUACK_PORT} ($label)" >&2
     return 1
   fi
   return 0
 }
 
 e2e_wait_for_quack_server() {
-  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
-  if [[ "$wait_host" == "tailnet" ]]; then
-    wait_host="${SERVER_IP:?SERVER_IP required for tailnet wait}"
-  elif [[ "$wait_host" == "localhost" ]]; then
-    wait_host="127.0.0.1"
-  fi
   local attempt=0
-  echo "Waiting for Quack on ${wait_host}:${QUACK_PORT} (server DuckDB must stay alive) ..."
+  echo "Waiting for Quack on port ${QUACK_PORT} (bind ${E2E_QUACK_BIND_HOST}; server DuckDB must stay alive) ..."
   while (( attempt < 60 )); do
     attempt=$((attempt + 1))
     if ! e2e_server_duckdb_pid >/dev/null 2>&1 || ! kill -0 "$(e2e_server_duckdb_pid)" 2>/dev/null; then
@@ -101,17 +92,19 @@ e2e_wait_for_quack_server() {
       headscale_ci_logs
       exit 1
     fi
-    if headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
-      echo "Quack is accepting TCP on ${wait_host}:${QUACK_PORT} (server pid $(e2e_server_duckdb_pid))"
+    if grep -q "listen_url" "$SERVER_LOG" 2>/dev/null && headscale_ci_quack_port_open "$QUACK_PORT"; then
+      echo "Quack is ready on port ${QUACK_PORT} (server pid $(e2e_server_duckdb_pid))"
       return 0
     fi
     if (( attempt % 5 == 0 )); then
       echo "  attempt ${attempt} (server duckdb pid $(e2e_server_duckdb_pid 2>/dev/null || echo '?')) ..."
       tail -5 "$SERVER_LOG" 2>/dev/null || true
+      ss -ltnp 2>/dev/null | grep ":${QUACK_PORT}" || true
     fi
     sleep 2
   done
-  echo "error: Quack not reachable on ${wait_host}:${QUACK_PORT}" >&2
+  echo "error: Quack not reachable on port ${QUACK_PORT}" >&2
+  ss -ltnp 2>/dev/null | grep ":${QUACK_PORT}" || echo "(no listener on :${QUACK_PORT})"
   tail -80 "$SERVER_LOG" >&2 || true
   headscale_ci_logs
   exit 1
@@ -168,6 +161,7 @@ fi
 
 echo "Using DuckDB: $DUCKDB"
 echo "E2e work directory: $WORK"
+echo "E2e Quack config: bind=${E2E_QUACK_BIND_HOST} attach=${E2E_QUACK_ATTACH_HOST} port=${QUACK_PORT}"
 : >"$SERVER_LOG"
 : >"$CLIENT_LOG"
 
@@ -218,7 +212,7 @@ SQL
 SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "0.0.0.0" "$QUACK_PORT")"
 SERVER_QUACK_SCOPE="$(headscale_ci_e2e_quack_secret_scope "0.0.0.0" "$QUACK_PORT")"
 echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
-echo "Server Quack bind: ${E2E_QUACK_BIND_HOST:-localhost} (see https://duckdb.org/docs/current/quack/overview)"
+echo "Server Quack bind: ${E2E_QUACK_BIND_HOST} (ATTACH via ${E2E_QUACK_ATTACH_HOST}; see https://duckdb.org/docs/current/quack/overview)"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"

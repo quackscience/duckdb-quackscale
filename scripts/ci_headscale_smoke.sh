@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-test QuackTail against Headscale (quackscale linked from source build).
+# Smoke-test QuackTail against Headscale (built-in quackscale; no LOAD quackscale).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,27 +34,13 @@ headscale_ci_verify_tailscale_client "$AUTHKEY" "quackscale-smoke"
 
 echo "Joining Headscale from DuckDB (control_url=$HEADSCALE_CONTROL_URL) ..."
 echo "--- SQL ---"
-cat <<SQL
-CALL tailscale_up(
-    hostname => 'quackscale-ci',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${STATE_DIR}',
-    ephemeral => true
-);
-CALL tailscale_status();
-SQL
+headscale_ci_sql_tailscale_up "quackscale-ci" "$STATE_DIR" "$AUTHKEY"
+echo "CALL tailscale_status();"
 echo "--- DuckDB output ---"
-"$DUCKDB" :memory: -batch -echo <<SQL
-CALL tailscale_up(
-    hostname => 'quackscale-ci',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${STATE_DIR}',
-    ephemeral => true
-);
-CALL tailscale_status();
-SQL
+{
+  headscale_ci_sql_tailscale_up "quackscale-ci" "$STATE_DIR" "$AUTHKEY"
+  echo "CALL tailscale_status();"
+} | "$DUCKDB" :memory: -batch -echo -f /dev/stdin
 
 echo "=== Headscale nodes after smoke ==="
 headscale_ci_exec headscale nodes list || true
