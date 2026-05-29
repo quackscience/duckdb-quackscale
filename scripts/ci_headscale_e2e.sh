@@ -65,9 +65,11 @@ e2e_assert_server_alive() {
     tail -80 "$SERVER_LOG" >&2 || true
     return 1
   fi
-  local wait_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
   if [[ "$wait_host" == "tailnet" ]]; then
     wait_host="${SERVER_IP:-127.0.0.1}"
+  elif [[ "$wait_host" == "localhost" ]]; then
+    wait_host="127.0.0.1"
   fi
   if ! headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
     echo "error: Quack not reachable on ${wait_host}:${QUACK_PORT} ($label)" >&2
@@ -77,9 +79,11 @@ e2e_assert_server_alive() {
 }
 
 e2e_wait_for_quack_server() {
-  local wait_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
   if [[ "$wait_host" == "tailnet" ]]; then
     wait_host="${SERVER_IP:?SERVER_IP required for tailnet wait}"
+  elif [[ "$wait_host" == "localhost" ]]; then
+    wait_host="127.0.0.1"
   fi
   local attempt=0
   echo "Waiting for Quack on ${wait_host}:${QUACK_PORT} (server DuckDB must stay alive) ..."
@@ -212,7 +216,9 @@ SQL
 } >"$WORK/server_serve.sql"
 
 SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "0.0.0.0" "$QUACK_PORT")"
-echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI}"
+SERVER_QUACK_SCOPE="$(headscale_ci_e2e_quack_secret_scope "0.0.0.0" "$QUACK_PORT")"
+echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
+echo "Server Quack bind: ${E2E_QUACK_BIND_HOST:-localhost} (see https://duckdb.org/docs/current/quack/overview)"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
@@ -244,22 +250,12 @@ LOAD quack;
 
 SQL
   headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CLIENT_STATE" "$AUTHKEY"
+  headscale_ci_sql_quack_client_attach "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_SCOPE"
   cat <<SQL
-
-CREATE SECRET (
-    TYPE quack,
-    TOKEN '${QUACK_TOKEN}',
-    SCOPE '${SERVER_QUACK_URI}'
-);
 
 -- Local quack_discover() lists this node's tailnet endpoints (proves tailscale_up on client).
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
 SELECT 'discover_count|' || COUNT(*)::VARCHAR;
-
-ATTACH '${SERVER_QUACK_URI}' AS remote (
-    TYPE quack,
-    DISABLE_SSL true
-);
 
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
 

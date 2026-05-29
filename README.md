@@ -89,7 +89,7 @@ CALL tailscale_up(
     state_dir => '~/.local/share/duckdb/quackscale'
 );
 
--- 2) Serve Quack on the tailnet (port 9494) with the shared token
+-- 2) Serve Quack on the tailnet (requires allow_other_hostname for non-local bind)
 CALL quack_serve(
     'quack:0.0.0.0:9494',
     allow_other_hostname => true,
@@ -100,11 +100,11 @@ CALL quack_serve(
 CALL quack_discover();
 ```
 
-`quack_uri()` and `quack_discover()` advertise how **clients** reach the server (MagicDNS hostname or tailnet IP). **Bind** on `0.0.0.0:9494` so Quack listens on all interfaces after `tailscale_up`. `quack_token()` reads `QUACK_TAILNET_TOKEN` or `QUACK_TOKEN`.
+For **local-only** (no tailnet), the [Quack docs](https://duckdb.org/docs/current/quack/overview) use `CALL quack_serve('quack:localhost', token => ...)` and `ATTACH 'quack:localhost' AS remote (TYPE quack)` with `SCOPE 'quack:localhost'` — plain HTTP is automatic for local URIs.
 
 ## Quick start — QuackTail client
 
-Same `QUACK_TAILNET_TOKEN` on the client machine (or use a [Quack secret](https://duckdb.org/docs/current/quack/overview#authentication)):
+Same `QUACK_TAILNET_TOKEN` on the client machine:
 
 ```sql
 LOAD quack;

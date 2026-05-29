@@ -412,34 +412,82 @@ headscale_ci_quack_client_uri() {
   echo "quack:$(headscale_ci_tailnet_fqdn "$hostname"):${port}"
 }
 
-# Reach peers by tailnet IP (tsnet dials IPs directly; MagicDNS needs accept-dns on the node).
+# Quack URI helpers — see https://duckdb.org/docs/current/quack/overview
 headscale_ci_quack_uri_for_ip() {
   local ip="$1"
   local port="${2:-9494}"
   echo "quack:${ip}:${port}"
 }
 
-# Quack binds on the host (0.0.0.0). Tailnet IPs are userspace-only until quackscale uses
-# tailscale_listen — on a single CI runner, ATTACH via loopback reaches the server process.
+# Docs canonical local form (port 9494 is implicit).
+headscale_ci_quack_uri_local() {
+  echo "quack:localhost"
+}
+
+# Client ATTACH URI for e2e. Same-host CI uses localhost (plain HTTP, no DISABLE_SSL).
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
-  local attach_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  local attach_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
   if [[ "$attach_host" == "tailnet" ]]; then
     headscale_ci_quack_uri_for_ip "$server_ip" "$port"
+  elif [[ "$attach_host" == "localhost" ]]; then
+    headscale_ci_quack_uri_local
   else
     headscale_ci_quack_uri_for_ip "$attach_host" "$port"
   fi
 }
 
-# Bind Quack on all interfaces (required for tailnet/tsnet; do not bind tailnet IP or MagicDNS name).
+# Secret SCOPE must match the server URI (docs: SCOPE 'quack:localhost').
+headscale_ci_e2e_quack_secret_scope() {
+  headscale_ci_e2e_quack_attach_uri "$@"
+}
+
+# Server bind URI. CI same-host: quack:localhost. Tailnet/production: 0.0.0.0 + allow_other_hostname.
 headscale_ci_sql_quack_serve() {
   local port="${1:-9494}"
-  cat <<SQL
+  local bind_host="${E2E_QUACK_BIND_HOST:-localhost}"
+  if [[ "$bind_host" == "0.0.0.0" || "$bind_host" == "tailnet" ]]; then
+    cat <<SQL
 CALL quack_serve(
     'quack:0.0.0.0:${port}',
     allow_other_hostname => true,
     token => quack_token()
 );
 SQL
+  else
+    cat <<SQL
+CALL quack_serve(
+    'quack:localhost',
+    token => quack_token()
+);
+SQL
+  fi
+}
+
+# Client ATTACH block per docs (secret + TYPE quack; DISABLE_SSL only for remote plain HTTP).
+headscale_ci_sql_quack_client_attach() {
+  local attach_uri="$1"
+  local token="$2"
+  local secret_scope="$3"
+  cat <<SQL
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${token}',
+    SCOPE '${secret_scope}'
+);
+
+SQL
+  if [[ "$attach_uri" == quack:localhost* || "$attach_uri" == quack:127.0.0.1* || "$attach_uri" == quack:[::1]* ]]; then
+    cat <<SQL
+ATTACH '${attach_uri}' AS remote (TYPE quack);
+SQL
+  else
+    cat <<SQL
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+SQL
+  fi
 }
