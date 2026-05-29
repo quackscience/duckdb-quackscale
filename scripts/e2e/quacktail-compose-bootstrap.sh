@@ -41,7 +41,8 @@ SQL
 
 write_client_demo_sql() {
   cat >"$WORK/client_demo.sql" <<SQL
-SELECT * FROM quack_discover();
+CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
+SELECT * FROM _discover;
 
 SELECT q AS probe_result
 FROM quack_query(
@@ -75,7 +76,10 @@ SQL
 
 if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
   AUTHKEY="$(cat "$WORK/authkey")"
-  if [[ ! -f "$WORK/client_demo.sql" ]] || ! grep -q 'quack_discover' "$WORK/client_demo.sql" 2>/dev/null; then
+  if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
+    || [[ ! -f "$WORK/client_demo.sql" ]] \
+    || ! grep -q '_discover AS' "$WORK/client_demo.sql" 2>/dev/null \
+    || ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql" 2>/dev/null; then
     write_client_init_sql "$AUTHKEY"
     write_client_demo_sql
     echo "✓ client SQL ready — ${ATTACH_URI}"

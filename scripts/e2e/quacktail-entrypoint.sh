@@ -149,13 +149,13 @@ print_duckdb_tables() {
 }
 
 ensure_client_demo_sql() {
-  local demo_sql="${WORK}/client_demo.sql"
-  if [[ -f "$demo_sql" ]] && grep -q 'quack_discover' "$demo_sql" 2>/dev/null; then
-    return 0
+  if [[ ! -f "${WORK}/authkey" ]]; then
+    echo "error: ${WORK}/authkey missing (is quacktail-server running?)" >&2
+    exit 1
   fi
-  QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
-  if [[ ! -f "$demo_sql" ]]; then
-    echo "error: ${demo_sql} missing" >&2
+  COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+  if [[ ! -f "${WORK}/client_demo.sql" ]] || [[ ! -f "${WORK}/client_init.sql" ]]; then
+    echo "error: client SQL not generated" >&2
     exit 1
   fi
 }
