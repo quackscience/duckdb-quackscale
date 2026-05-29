@@ -114,10 +114,11 @@ cat "$WORK/server_quack.sql"
 quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
 
 echo "Waiting for server node on Headscale ..."
-SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 10)"
+SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 30)"
 echo "Server tailnet IP: ${SERVER_IP}"
 echo "Server MagicDNS: $(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
-quacktail_ci_wait_server "$QUACK_PORT" "$SERVER_IP"
+quacktail_ci_wait_server_local "$QUACK_PORT"
+quacktail_ci_wait_server_published "$QUACK_PORT" "$SERVER_IP" "$QUACK_TOKEN"
 
 SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
 SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
@@ -127,6 +128,12 @@ if (( TAILNET_MESH_WAIT > 0 )); then
   echo "Optional fixed mesh wait: ${TAILNET_MESH_WAIT}s (cross-node readiness is polled in client) ..."
   sleep "$TAILNET_MESH_WAIT"
 fi
+
+# Refresh tailnet IP after publish wait so ATTACH URI matches Headscale assignment.
+SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 10)"
+SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
+SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
+echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
 
 {
   headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
@@ -149,15 +156,17 @@ SELECT 'discover_count|' || COUNT(*)::VARCHAR;
 
 SQL
   headscale_ci_sql_quack_client_attach "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_SCOPE"
-  cat <<SQL
+} >"$WORK/client_attach.sql"
 
+{
+  cat <<SQL
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
 
 SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
 SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
 SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
 SQL
-} >"$WORK/client_attach.sql"
+} >"$WORK/client_queries.sql"
 
 export E2E_SERVER_IP="$SERVER_IP"
 export E2E_SERVER_HOST="$SERVER_HOST"
@@ -174,6 +183,15 @@ if (( CLIENT_RC == 124 )); then
 fi
 
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
+
+if echo "$CLIENT_OUT" | grep -qE 'Failed to send message|Timeout was reached|IO Error:.*HTTP POST'; then
+  echo "error: Quack ATTACH failed (HTTP POST to server endpoint)" >&2
+  echo "$CLIENT_OUT" >&2
+  quacktail_ci_client_logs
+  headscale_ci_logs
+  exit 1
+fi
+
 if (( CLIENT_RC != 0 )); then
   echo "error: client container failed (exit $CLIENT_RC)" >&2
   quacktail_ci_client_logs
@@ -188,12 +206,12 @@ echo "$CLIENT_OUT" | grep -q 'after_attach|ok' || {
 }
 echo "ok: ATTACH completed"
 
-echo "$CLIENT_OUT" | grep -q 'cross-node tailnet TCP gate passed' || {
-  echo "error: cross-node tailnet TCP gate did not pass" >&2
+echo "$CLIENT_OUT" | grep -qE 'ok: cross-node Quack reachable' || {
+  echo "error: cross-node Quack POST gate did not pass" >&2
   echo "$CLIENT_OUT" >&2
   exit 1
 }
-echo "ok: cross-node tailnet TCP gate"
+echo "ok: cross-node Quack POST gate"
 
 echo "=== Result rows ==="
 echo "$CLIENT_OUT" | grep -E 'discover_count|row_count|client_msg|server_msg|insert-from-client|seed-from-server' || true

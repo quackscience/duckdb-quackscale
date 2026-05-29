@@ -70,6 +70,6 @@ SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 30)"
 echo "Server tailnet IP: ${SERVER_IP}"
 
 quacktail_ci_wait_server_local "$QUACK_PORT"
-quacktail_ci_wait_server_published "$QUACK_PORT" "$SERVER_IP"
+quacktail_ci_wait_server_published "$QUACK_PORT" "$SERVER_IP" "${QUACK_TAILNET_TOKEN:-}"
 
 echo "Server publish smoke passed (loopback bind + tailnet self-reach on ${SERVER_IP}:${QUACK_PORT})."

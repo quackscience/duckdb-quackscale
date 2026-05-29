@@ -135,24 +135,25 @@ quacktail_ci_wait_server_local() {
   return 1
 }
 
-# Poll from inside the server container until its own tailnet IP:port responds (Serve published).
+# Poll from inside the server container until its own tailnet IP:port accepts Quack POST.
 quacktail_ci_wait_server_published() {
   local port="${1:-9494}"
   local server_ip="${2:?server tailnet IP required}"
-  local attempts="${3:-${E2E_SERVER_PUBLISH_ATTEMPTS:-60}}"
-  local poll_sec="${4:-${E2E_SERVER_PUBLISH_POLL_SEC:-2}}"
+  local token="${3:-${QUACK_TAILNET_TOKEN:-}}"
+  local attempts="${4:-${E2E_SERVER_PUBLISH_ATTEMPTS:-60}}"
+  local poll_sec="${5:-${E2E_SERVER_PUBLISH_POLL_SEC:-2}}"
   local i
 
-  echo "Polling server self-reach via tailnet ${server_ip}:${port} (up to ${attempts} attempts) ..."
+  echo "Polling server Quack POST on tailnet ${server_ip}:${port} (up to ${attempts} attempts) ..."
   for (( i = 1; i <= attempts; i++ )); do
-    if quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "$server_ip"; then
-      echo "ok: server published endpoint reachable at ${server_ip}:${port} (attempt ${i})"
+    if quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "$server_ip" "$token"; then
+      echo "ok: server published Quack endpoint at ${server_ip}:${port} (attempt ${i})"
       return 0
     fi
     echo "  publish attempt ${i}/${attempts} ..."
     sleep "$poll_sec"
   done
-  echo "error: server tailnet publish not reachable at ${server_ip}:${port}" >&2
+  echo "error: server Quack endpoint not reachable at ${server_ip}:${port}" >&2
   quacktail_ci_logs
   return 1
 }
@@ -171,12 +172,20 @@ quacktail_ci_container_http_open() {
   local container="${1:?container}"
   local port="${2:?port}"
   local host="${3:-127.0.0.1}"
-  docker exec "$container" curl -fsS -m 3 -o /dev/null "http://${host}:${port}/" 2>/dev/null \
-    && return 0
-  docker exec "$container" curl -fsS -m 3 -o /dev/null "http://${host}:${port}/quack" 2>/dev/null \
-    && return 0
+  local token="${4:-}"
   local code
-  code="$(docker exec "$container" curl -sS -m 3 -o /dev/null -w '%{http_code}' "http://${host}:${port}/" 2>/dev/null || echo 000)"
+  if [[ -n "$token" ]]; then
+    code="$(docker exec "$container" curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+      -H "Authorization: Bearer ${token}" \
+      -H 'Content-Type: application/json' \
+      -d '{}' \
+      "http://${host}:${port}/quack" 2>/dev/null || echo 000)"
+  else
+    code="$(docker exec "$container" curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+      -H 'Content-Type: application/json' \
+      -d '{}' \
+      "http://${host}:${port}/quack" 2>/dev/null || echo 000)"
+  fi
   [[ "$code" != "000" ]]
 }
 
@@ -220,6 +229,7 @@ quacktail_ci_run_client() {
     -e "E2E_CROSS_NODE_GATE_ATTEMPTS=${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}" \
     -e "E2E_CROSS_NODE_POLL_SEC=${E2E_CROSS_NODE_POLL_SEC:-2}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
+    -e "QUACK_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     "$QUACKTAIL_IMAGE"
 }
 

@@ -4,8 +4,8 @@
 #   sleep infinity | duckdb -init /path/to/init.sql
 # https://github.com/duckdb/duckdb-quack-infra/blob/main/boot.sh
 #
-# Client: one long-lived DuckDB (-init tailscale_up), poll cross-node HTTP until
-# the server is reachable, then ATTACH/queries on the same stdin stream.
+# Client: one long-lived DuckDB (-init tailscale_up), poll cross-node Quack POST until
+# the server is reachable, then ATTACH/queries on the same stdin stream (-bail on error).
 set -euo pipefail
 
 DUCKDB="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
@@ -35,34 +35,12 @@ quacktail_sql_extension_directory() {
   quacktail_ext_sql_set "$ext_dir"
 }
 
-quacktail_curl_tailnet_http() {
-  local host="${1:?host}"
-  local port="${2:?port}"
-  curl -fsS -m 3 -o /dev/null "http://${host}:${port}/quack" 2>/dev/null && return 0
-  curl -fsS -m 3 -o /dev/null "http://${host}:${port}/" 2>/dev/null && return 0
-  local code
-  code="$(curl -sS -m 3 -o /dev/null -w '%{http_code}' "http://${host}:${port}/" 2>/dev/null || echo 000)"
-  [[ "$code" != "000" ]]
-}
-
 wait_for_cross_node_quack() {
   local host="${1:?host}"
   local port="${2:?port}"
   local attempts="${3:-${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}}"
-  local poll_sec="${E2E_CROSS_NODE_POLL_SEC:-2}"
-  local i
-
-  for (( i = 1; i <= attempts; i++ )); do
-    echo "=== tailnet TCP gate attempt ${i}/${attempts}: curl http://${host}:${port}/ (cross-node) ===" >&2
-    if quacktail_curl_tailnet_http "$host" "$port"; then
-      echo "ok: cross-node tailnet TCP gate passed (${host}:${port})" >&2
-      return 0
-    fi
-    sleep "$poll_sec"
-  done
-
-  echo "error: cross-node tailnet TCP gate failed (${host}:${port}) after ${attempts} attempts" >&2
-  return 1
+  local token="${QUACK_TAILNET_TOKEN:-${QUACK_TOKEN:-}}"
+  quacktail_wait_quack_endpoint "$host" "$port" "$token" "cross-node Quack" "$attempts" "${E2E_CROSS_NODE_POLL_SEC:-2}"
 }
 
 run_server() {
@@ -94,9 +72,13 @@ run_client() {
 
   echo "=== client init SQL (-init; DuckDB stays running for ATTACH) ==="
   cat "${WORK}/client_init.sql"
-  echo "=== client attach SQL (after cross-node poll gate) ==="
-  echo "Cross-node gate target: ${gate_host}:${PORT} (attempts=${gate_attempts})" >&2
+  echo "=== client attach SQL (after cross-node Quack POST gate) ==="
+  echo "Cross-node gate target: http://${gate_host}:${PORT}/quack (attempts=${gate_attempts})" >&2
   cat "${WORK}/client_attach.sql"
+  if [[ -f "${WORK}/client_queries.sql" ]]; then
+    echo "=== client queries SQL (after successful ATTACH; -bail stops on attach failure) ==="
+    cat "${WORK}/client_queries.sql"
+  fi
 
   {
     if (( mesh_wait > 0 )); then
@@ -104,7 +86,11 @@ run_client() {
     fi
     wait_for_cross_node_quack "$gate_host" "$PORT" "$gate_attempts"
     cat "${WORK}/client_attach.sql"
-  } | "$DUCKDB" -cmd "$(quacktail_sql_extension_directory)" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
+    if [[ -f "${WORK}/client_queries.sql" ]]; then
+      cat "${WORK}/client_queries.sql"
+    fi
+  } | "$DUCKDB" -bail -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
+    -init "${WORK}/client_init.sql" -batch -echo
 }
 
 case "$ROLE" in
