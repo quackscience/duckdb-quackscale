@@ -97,7 +97,9 @@ SQL
 } >"$WORK/server_setup.sql"
 
 {
+  headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
   cat <<SQL
+
 LOAD quack;
 
 SQL
@@ -124,7 +126,9 @@ echo "Waiting ${TAILNET_MESH_WAIT}s for tailnet mesh ..."
 sleep "$TAILNET_MESH_WAIT"
 
 {
+  headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
   cat <<SQL
+
 LOAD quack;
 
 SQL

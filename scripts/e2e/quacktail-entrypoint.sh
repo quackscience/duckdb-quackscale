@@ -21,24 +21,42 @@ if [[ ! -x "$DUCKDB" ]]; then
 fi
 
 ensure_quack() {
-  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-}"
-  if [[ -n "$ext_dir" ]]; then
-    mkdir -p "$ext_dir"
-    export DUCKDB_EXTENSION_DIRECTORY="$ext_dir"
-    echo "=== DUCKDB_EXTENSION_DIRECTORY=$ext_dir ==="
-  fi
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(headscale_ci_container_extension_directory 2>/dev/null || echo /duckdb_extensions)}"
+  mkdir -p "$ext_dir"
+  export DUCKDB_EXTENSION_DIRECTORY="$ext_dir"
+  echo "=== extension_directory=${ext_dir} (SET in SQL; env is mount hint only) ==="
   echo "=== ensure quack extension ==="
-  if "$DUCKDB" :memory: -batch -c "LOAD quack; SELECT 1;"; then
-    "$DUCKDB" :memory: -batch -echo -c \
-      "SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
-    return 0
+  local set_cmd="SET extension_directory='${ext_dir}';"
+  if "$DUCKDB" :memory: -batch -c "${set_cmd} LOAD quack; SELECT 1;"; then
+    :
+  else
+    echo "Installing quack (core, then core_nightly) ..."
+    if ! "$DUCKDB" :memory: -batch -c "${set_cmd} INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
+      "$DUCKDB" :memory: -batch -c "${set_cmd} INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+    fi
   fi
-  echo "Installing quack (core, then core_nightly) ..."
-  if ! "$DUCKDB" :memory: -batch -c "INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
-    "$DUCKDB" :memory: -batch -c "INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+  local loaded install_path
+  loaded="$("$DUCKDB" :memory: -batch -csv -noheader -c \
+    "${set_cmd} LOAD quack; SELECT loaded FROM duckdb_extensions() WHERE extension_name='quack';" \
+    | tail -1 | tr -d '[:space:]')"
+  install_path="$("$DUCKDB" :memory: -batch -csv -noheader -c \
+    "${set_cmd} LOAD quack; SELECT install_path FROM duckdb_extensions() WHERE extension_name='quack';" \
+    | tail -1 | tr -d '[:space:]')"
+  if [[ "$loaded" != "true" ]]; then
+    echo "error: quack failed to load (loaded=$loaded path=$install_path)" >&2
+    exit 1
+  fi
+  if [[ "$install_path" != "${ext_dir}"* ]]; then
+    echo "error: quack install_path not under extension_directory ($install_path)" >&2
+    exit 1
   fi
   "$DUCKDB" :memory: -batch -echo -c \
-    "SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
+    "${set_cmd} LOAD quack; SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
+}
+
+quacktail_sql_extension_directory() {
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-/duckdb_extensions}"
+  echo "SET extension_directory='${ext_dir}';"
 }
 
 quacktail_curl_tailnet_http() {
@@ -61,8 +79,8 @@ run_server() {
   echo "=== server init SQL (duckdb -init) ==="
   cat "$INIT_SQL"
   echo "=== starting Quack server: sleep infinity | duckdb -init ==="
-  export DUCKDB DB WORK INIT_SQL
-  exec bash -c 'sleep infinity | "$DUCKDB" "$DB" -init "$INIT_SQL"'
+  export DUCKDB DB WORK INIT_SQL DUCKDB_EXTENSION_DIRECTORY
+  exec bash -c 'sleep infinity | "$DUCKDB" -cmd "SET extension_directory='"'"'${DUCKDB_EXTENSION_DIRECTORY}'"'"';" "$DB" -init "$INIT_SQL"'
 }
 
 run_client() {
@@ -91,7 +109,7 @@ run_client() {
     fi
     echo "ok: cross-node tailnet TCP gate passed (${gate_host}:${PORT})" >&2
     cat "${WORK}/client_attach.sql"
-  } | "$DUCKDB" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
+  } | "$DUCKDB" -cmd "$(quacktail_sql_extension_directory)" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
 }
 
 case "$ROLE" in

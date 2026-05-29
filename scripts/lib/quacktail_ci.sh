@@ -25,22 +25,55 @@ quacktail_ci_docker_ext_setup() {
   fi
 }
 
+# Run DuckDB with SET extension_directory when a shared cache dir is configured.
+quacktail_ci_duckdb_sql() {
+  local duckdb_bin="${1:?duckdb binary}"
+  local ext_dir="${2:-}"
+  shift 2
+  local sql="$*"
+  if [[ -n "$ext_dir" ]]; then
+    "$duckdb_bin" :memory: -batch -c "SET extension_directory='${ext_dir}'; ${sql}"
+  else
+    "$duckdb_bin" :memory: -batch -c "$sql"
+  fi
+}
+
 # Verify/install quack on the host DuckDB before starting containers.
 quacktail_ci_verify_duckdb_quack() {
   local duckdb_bin="${1:?duckdb binary}"
   quacktail_ci_docker_ext_setup
-  if [[ -n "${DUCKDB_EXTENSION_DIRECTORY:-}" ]]; then
-    export DUCKDB_EXTENSION_DIRECTORY
-    echo "Host DUCKDB_EXTENSION_DIRECTORY=$DUCKDB_EXTENSION_DIRECTORY"
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-}"
+  local set_ext=""
+  if [[ -n "$ext_dir" ]]; then
+    mkdir -p "$ext_dir"
+    export DUCKDB_EXTENSION_DIRECTORY="$ext_dir"
+    set_ext="SET extension_directory='${ext_dir}';"
+    echo "Host extension cache (SET extension_directory): $ext_dir"
   fi
-  if ! "$duckdb_bin" :memory: -batch -c "LOAD quack; SELECT 1;"; then
+  if ! quacktail_ci_duckdb_sql "$duckdb_bin" "$ext_dir" "LOAD quack; SELECT 1;"; then
     echo "Installing quack on host (core, then core_nightly) ..."
-    if ! "$duckdb_bin" :memory: -batch -c "INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
-      "$duckdb_bin" :memory: -batch -c "INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+    if ! quacktail_ci_duckdb_sql "$duckdb_bin" "$ext_dir" "INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
+      quacktail_ci_duckdb_sql "$duckdb_bin" "$ext_dir" "INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
     fi
   fi
+  local loaded install_path
+  loaded="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "${set_ext} LOAD quack; SELECT loaded FROM duckdb_extensions() WHERE extension_name='quack';" \
+    | tail -1 | tr -d '[:space:]')"
+  install_path="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "${set_ext} LOAD quack; SELECT install_path FROM duckdb_extensions() WHERE extension_name='quack';" \
+    | tail -1 | tr -d '[:space:]')"
+  if [[ "$loaded" != "true" ]]; then
+    echo "error: quack did not load on host (loaded=$loaded path=$install_path)" >&2
+    exit 1
+  fi
+  if [[ -n "$ext_dir" && "$install_path" != "${ext_dir}"* ]]; then
+    echo "error: quack install_path not under extension_directory ($install_path)" >&2
+    exit 1
+  fi
+  echo "=== quack extension ==="
   "$duckdb_bin" :memory: -batch -echo -c \
-    "SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
+    "${set_ext} LOAD quack; SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
 }
 
 quacktail_ci_build_image() {

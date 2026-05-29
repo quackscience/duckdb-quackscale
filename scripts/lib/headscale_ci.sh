@@ -431,6 +431,19 @@ CALL tailscale_up(
 SQL
 }
 
+# Host path for shared quack installs (mounted at QUACKTAIL_CONTAINER_EXT_DIR in e2e containers).
+QUACKTAIL_CONTAINER_EXT_DIR="${QUACKTAIL_CONTAINER_EXT_DIR:-/duckdb_extensions}"
+
+headscale_ci_container_extension_directory() {
+  echo "$QUACKTAIL_CONTAINER_EXT_DIR"
+}
+
+# DuckDB ignores DUCKDB_EXTENSION_DIRECTORY env; use SET in every session that loads quack.
+headscale_ci_sql_set_extension_directory() {
+  local dir="${1:-$(headscale_ci_container_extension_directory)}"
+  echo "SET extension_directory='${dir}';"
+}
+
 headscale_ci_tailnet_fqdn() {
   local hostname="${1:?hostname required}"
   echo "${hostname}.${HEADSCALE_MAGICDNS_BASE_DOMAIN}"
@@ -498,7 +511,7 @@ headscale_ci_quack_uri_is_local() {
   esac
 }
 
-# Client ATTACH — explicit TOKEN (matches QUACK_AUTH); DISABLE_SSL for tailnet plain HTTP.
+# Client ATTACH — CREATE SECRET (SCOPE = attach URI) then ATTACH; DISABLE_SSL for tailnet HTTP.
 headscale_ci_sql_quack_client_attach() {
   local attach_uri="$1"
   local token="$2"
@@ -509,16 +522,26 @@ SELECT 'before_attach|${attach_uri}';
 SQL
   if headscale_ci_quack_uri_is_local "$attach_uri"; then
     cat <<SQL
-ATTACH '${attach_uri}' AS remote (
+CREATE SECRET (
     TYPE quack,
-    TOKEN '${token}'
+    TOKEN '${token}',
+    SCOPE '${secret_scope}'
+);
+
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack
 );
 SQL
   else
     cat <<SQL
-ATTACH '${attach_uri}' AS remote (
+CREATE SECRET (
     TYPE quack,
     TOKEN '${token}',
+    SCOPE '${secret_scope}'
+);
+
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
     DISABLE_SSL true
 );
 SQL
