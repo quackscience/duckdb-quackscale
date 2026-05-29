@@ -267,6 +267,57 @@ headscale_ci_verify_tailscale_client() {
   headscale_ci_exec headscale nodes list || true
 }
 
+# Curl target_ip:port from a throwaway Tailscale client on the tailnet (validates cross-node TCP).
+headscale_ci_verify_tailnet_tcp() {
+  local target_ip="${1:?target tailnet IP required}"
+  local port="${2:?port required}"
+  local authkey="${3:?authkey required}"
+  local hostname="${4:-tailnet-tcp-probe-$$}"
+  local state_dir container attempt rc=1
+
+  state_dir="$(mktemp -d)"
+  container="tailnet-tcp-probe-$$"
+
+  echo "Verifying tailnet TCP ${target_ip}:${port} from Tailscale client ..."
+  docker pull -q "$TAILSCALE_IMAGE" >/dev/null
+
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  docker run -d --name "$container" \
+    --cap-add=NET_ADMIN \
+    --device=/dev/net/tun \
+    --network "$HEADSCALE_DOCKER_NETWORK" \
+    -v "$state_dir:/var/lib/tailscale" \
+    -e TS_AUTHKEY="$authkey" \
+    -e TS_STATE_DIR=/var/lib/tailscale \
+    -e "TS_EXTRA_ARGS=--login-server=${HEADSCALE_CONTROL_URL} --hostname=${hostname} --reset --accept-routes" \
+    "$TAILSCALE_IMAGE" >/dev/null
+
+  set +e
+  for attempt in $(seq 1 30); do
+    if docker exec "$container" curl -fsS -m 5 -o /dev/null "http://${target_ip}:${port}/" 2>/dev/null \
+      || docker exec "$container" curl -fsS -m 5 -o /dev/null "http://${target_ip}:${port}/quack" 2>/dev/null; then
+      rc=0
+      break
+    fi
+    if (( attempt % 5 == 0 )); then
+      echo "  waiting for tailnet TCP ${target_ip}:${port} (attempt ${attempt}) ..."
+    fi
+    sleep 2
+  done
+  set -e
+
+  if (( rc != 0 )); then
+    echo "error: could not reach ${target_ip}:${port} over tailnet" >&2
+    docker logs "$container" 2>&1 | tail -30 >&2 || true
+  else
+    echo "Tailnet TCP ${target_ip}:${port} reachable."
+  fi
+
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  rm -rf "$state_dir" 2>/dev/null || sudo rm -rf "$state_dir" 2>/dev/null || true
+  return "$rc"
+}
+
 headscale_ci_node_ipv4() {
   local hostname="${1:?node hostname}"
   local max_attempts="${2:-${HEADSCALE_NODE_WAIT_ATTEMPTS:-90}}"
@@ -476,6 +527,7 @@ headscale_ci_sql_quack_serve() {
   cat <<SQL
 CALL quack_serve(
     'quack:127.0.0.1:${port}',
+    allow_other_hostname => true,
     token => quack_token()
 );
 CALL tailscale_serve_local(port => ${port});

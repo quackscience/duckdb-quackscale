@@ -16,6 +16,7 @@ CALL tailscale_up(
 -- Quack listens locally; tailscale_serve_local publishes port 9494 on the tailnet.
 CALL quack_serve(
     'quack:127.0.0.1:9494',
+    allow_other_hostname => true,
     token => quack_token()
 );
 CALL tailscale_serve_local(port => 9494);

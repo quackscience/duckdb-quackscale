@@ -120,6 +120,16 @@ echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
 echo "Waiting ${TAILNET_MESH_WAIT}s for tailnet mesh ..."
 sleep "$TAILNET_MESH_WAIT"
 
+headscale_ci_verify_tailnet_tcp "$SERVER_IP" "$QUACK_PORT" "$AUTHKEY" "quacktail-mesh-probe"
+
+{
+  cat <<SQL
+LOAD quack;
+
+SQL
+  headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY"
+} >"$WORK/client_join.sql"
+
 {
   cat <<SQL
 LOAD quack;
