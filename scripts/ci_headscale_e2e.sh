@@ -146,20 +146,14 @@ set -e
 docker logs "$QUACKTAIL_CLIENT_CONTAINER" >"$CLIENT_LOG" 2>&1 || true
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
 
-if ! quacktail_ci_server_running; then
-  echo "error: server container exited before client finished" >&2
-  quacktail_ci_logs
-  exit 1
-fi
-
 if (( CLIENT_RC == 124 )); then
   echo "error: client timed out after ${CLIENT_TIMEOUT}s (server still running)" >&2
   exit 1
 fi
 
-if echo "$CLIENT_OUT" | grep -qE 'Failed to send message|Timeout was reached|IO Error:.*HTTP POST'; then
-  echo "error: Quack ATTACH failed (HTTP POST)" >&2
-  echo "$CLIENT_OUT" >&2
+if ! quacktail_ci_server_running; then
+  echo "error: server container exited before client finished" >&2
+  quacktail_ci_logs
   exit 1
 fi
 
@@ -169,17 +163,25 @@ if (( CLIENT_RC != 0 )); then
   exit 1
 fi
 
+if echo "$CLIENT_OUT" | grep -qE 'Failed to send message|Timeout was reached|IO Error:.*HTTP POST'; then
+  echo "error: Quack HTTP failed" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+fi
+
+echo "$CLIENT_OUT" | grep -q 'quack_query_probe|1' || {
+  echo "error: quack_query probe failed (server not reachable via Quack protocol)" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+}
+echo "ok: quack_query probe"
+
 echo "$CLIENT_OUT" | grep -q 'after_attach|ok' || {
   echo "error: ATTACH did not complete" >&2
   echo "$CLIENT_OUT" >&2
   exit 1
 }
-
-echo "$CLIENT_OUT" | grep -qE 'ok: cross-node Quack reachable' || {
-  echo "error: cross-node Quack gate did not pass" >&2
-  echo "$CLIENT_OUT" >&2
-  exit 1
-}
+echo "ok: ATTACH completed"
 
 echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
   echo "error: client INSERT not found" >&2

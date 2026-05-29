@@ -64,7 +64,7 @@ quacktail_ci_logs() {
   echo "::group::QuackTail server container logs"
   if docker ps -a --filter "name=^/${QUACKTAIL_SERVER_CONTAINER}$" --format '{{.Names}}' \
     | grep -qx "$QUACKTAIL_SERVER_CONTAINER"; then
-    docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | tail -200 || true
+    docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | tail -500 || true
   else
     echo "(no server container)"
   fi
@@ -199,14 +199,23 @@ quacktail_ci_start_client() {
 
   local server_host="${E2E_SERVER_HOST:-quacktail-server}"
   local server_ip="${E2E_SERVER_IP:?E2E_SERVER_IP must be set}"
+  local attach_host="${E2E_QUACK_ATTACH_HOST:-hostname}"
+  local docker_host_args=()
+
+  if [[ "$attach_host" == "hostname" || "$attach_host" == "magicdns" ]]; then
+    docker_host_args=(--add-host "${server_host}:${server_ip}")
+    echo "Client /etc/hosts: ${server_host} -> ${server_ip}"
+  else
+    echo "Client ATTACH via tailnet IP ${server_ip}"
+  fi
 
   quacktail_ci_docker_ext_setup
   echo "Starting client container '$QUACKTAIL_CLIENT_CONTAINER' (server still running) ..."
-  echo "Client ATTACH/gate target: ${server_ip}:${port}"
   docker run -d --name "$QUACKTAIL_CLIENT_CONTAINER" \
     --cap-add=NET_ADMIN \
     --device=/dev/net/tun \
     --network "$HEADSCALE_DOCKER_NETWORK" \
+    "${docker_host_args[@]}" \
     -v "${work_dir}:/work" \
     -v "${duckdb_bin}:/usr/local/bin/duckdb:ro" \
     "${QUACKTAIL_DOCKER_EXT_ARGS[@]}" \

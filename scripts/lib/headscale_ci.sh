@@ -472,16 +472,16 @@ headscale_ci_quack_uri_local() {
   echo "quack:127.0.0.1"
 }
 
-# Client ATTACH URI — tailnet IP by default; hostname/magicdns via env for DNS tests.
+# Client ATTACH URI — hostname + --add-host by default (matches quack_uri() on server).
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
   local server_host="${E2E_SERVER_HOST:-quacktail-server}"
-  case "${E2E_QUACK_ATTACH_HOST:-ip}" in
+  case "${E2E_QUACK_ATTACH_HOST:-hostname}" in
     ip) headscale_ci_quack_uri_for_ip "$server_ip" "$port" ;;
     magicdns) headscale_ci_quack_client_uri "$server_host" "$port" ;;
     hostname) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
-    *) headscale_ci_quack_uri_for_ip "$server_ip" "$port" ;;
+    *) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
   esac
 }
 
@@ -490,10 +490,12 @@ headscale_ci_e2e_quack_secret_scope() {
   headscale_ci_e2e_quack_attach_uri "$@"
 }
 
-# Server: Quack on loopback, then Tailscale Serve forwards tailnet:port → 127.0.0.1:port.
+# Server: Quack on tailnet via quack_uri() (default), or loopback + tailscale_serve_local (legacy).
 headscale_ci_sql_quack_serve() {
   local port="${1:-9494}"
-  cat <<SQL
+  case "${E2E_QUACK_SERVE_MODE:-tailnet}" in
+    loopback_serve)
+      cat <<SQL
 CALL quack_serve(
     'quack:127.0.0.1:${port}',
     allow_other_hostname => true,
@@ -501,6 +503,17 @@ CALL quack_serve(
 );
 CALL tailscale_serve_local(port => ${port});
 SQL
+      ;;
+    tailnet|*)
+      cat <<SQL
+CALL quack_serve(
+    quack_uri(),
+    allow_other_hostname => true,
+    token => quack_token()
+);
+SQL
+      ;;
+  esac
 }
 
 # True for loopback Quack URIs only (plain HTTP; no DISABLE_SSL).
@@ -511,12 +524,22 @@ headscale_ci_quack_uri_is_local() {
   esac
 }
 
-# Client ATTACH — CREATE SECRET (SCOPE = attach URI) then ATTACH; DISABLE_SSL for tailnet HTTP.
+# Client: quack_query probe (same HTTP stack as ATTACH) then CREATE SECRET + ATTACH.
 headscale_ci_sql_quack_client_attach() {
   local attach_uri="$1"
   local token="$2"
   local secret_scope="$3"
   cat <<SQL
+SELECT 'before_quack_query|${attach_uri}';
+
+SELECT 'quack_query_probe|' || CAST(q AS VARCHAR)
+FROM quack_query(
+    '${attach_uri}',
+    'SELECT 1 AS q',
+    token => '${token}',
+    disable_ssl => true
+);
+
 SELECT 'before_attach|${attach_uri}';
 
 SQL
