@@ -102,6 +102,21 @@ quacktail_ci_container_http_open() {
   [[ "$code" != "000" ]]
 }
 
+# Verify Quack is reachable on the Docker network before client ATTACH.
+quacktail_ci_preflight_attach_host() {
+  local attach_host="${1:?attach host}"
+  local port="${2:?port}"
+  echo "Preflight: HTTP to http://${attach_host}:${port}/ from network ${HEADSCALE_DOCKER_NETWORK} ..."
+  local code
+  code="$(docker run --rm --network "$HEADSCALE_DOCKER_NETWORK" "$QUACKTAIL_IMAGE" \
+    curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://${attach_host}:${port}/" 2>/dev/null || echo 000)"
+  if [[ "$code" == "000" ]]; then
+    echo "error: cannot reach Quack at ${attach_host}:${port} on Docker network" >&2
+    return 1
+  fi
+  echo "Preflight ok: HTTP ${code} from ${attach_host}:${port}"
+}
+
 quacktail_ci_run_client() {
   local duckdb_bin="${1:?duckdb binary path}"
   local work_dir="${2:?work directory}"

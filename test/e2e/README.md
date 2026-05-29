@@ -54,7 +54,11 @@ Docker must be running. Set `QUACK_TAILNET_TOKEN` to override the default shared
 |------|------|-----------|
 | Headscale Docker | control plane | Preauth key, node registration |
 | Server container | `quacktail-server` | `tailscale_up`, `quack_serve` on `0.0.0.0:9494` |
-| Client container | `quacktail-client` | `tailscale_up`, shared-token `CREATE SECRET`, `quack_discover`, tailnet `ATTACH`, `INSERT`, `SELECT` |
+| Client container | `quacktail-client` | `tailscale_up`, `quack_discover`, Docker-network `ATTACH`, `INSERT`, `SELECT` |
+
+**Quack transport in CI:** client `ATTACH` uses the server container’s **Docker network alias** (`quack:quacktail-server:9494`), not the tailnet IP. Two separate tsnet stacks do not yet route Quack TCP peer-to-peer (`tailscale_listen` bridge). Tailnet join is still validated via `quack_discover` on the client before `ATTACH`.
+
+Set `E2E_QUACK_ATTACH_VIA=tailnet` to attempt tailnet IP ATTACH (expected to hang until peer routing exists).
 
 ## Related
 

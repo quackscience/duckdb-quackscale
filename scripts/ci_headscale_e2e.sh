@@ -13,6 +13,8 @@ SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
 CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-120}"
+export E2E_QUACK_ATTACH_VIA="${E2E_QUACK_ATTACH_VIA:-docker}"
+export E2E_SERVER_HOST="$SERVER_HOST"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
 mkdir -p "$WORK"
@@ -52,7 +54,7 @@ fi
 
 echo "Using DuckDB: $DUCKDB"
 echo "E2e work directory: $WORK"
-echo "E2e mode: Docker containers on network ${HEADSCALE_DOCKER_NETWORK}"
+echo "E2e mode: Docker containers on network ${HEADSCALE_DOCKER_NETWORK} (Quack ATTACH via ${E2E_QUACK_ATTACH_VIA})"
 
 quacktail_ci_build_image "$ROOT"
 
@@ -113,9 +115,13 @@ SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 60)"
 echo "Server tailnet IP: ${SERVER_IP}"
 echo "Server MagicDNS: $(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
 
-SERVER_QUACK_URI="$(headscale_ci_quack_uri_for_ip "$SERVER_IP" "$QUACK_PORT")"
+SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
 SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
 echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
+if [[ "$E2E_QUACK_ATTACH_VIA" == "docker" ]]; then
+  echo "Note: Quack uses Docker network DNS; tailnet join is validated via quack_discover before ATTACH."
+  quacktail_ci_preflight_attach_host "$SERVER_HOST" "$QUACK_PORT"
+fi
 
 {
   cat <<SQL
@@ -123,11 +129,14 @@ LOAD quack;
 
 SQL
   headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY"
-  headscale_ci_sql_quack_client_attach "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_SCOPE"
   cat <<SQL
 
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
 SELECT 'discover_count|' || COUNT(*)::VARCHAR;
+
+SQL
+  headscale_ci_sql_quack_client_attach "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_SCOPE"
+  cat <<SQL
 
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
 

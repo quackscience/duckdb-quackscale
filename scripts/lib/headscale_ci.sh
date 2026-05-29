@@ -449,23 +449,31 @@ headscale_ci_quack_uri_for_ip() {
   echo "quack:${ip}:${port}"
 }
 
-# Local CI form — explicit IPv4 avoids localhost IPv4/IPv6 bind mismatches (Quack docs).
 headscale_ci_quack_uri_local() {
   echo "quack:127.0.0.1"
 }
 
-# Client ATTACH URI for e2e. Same-host CI uses localhost (plain HTTP, no DISABLE_SSL).
+# ATTACH URI for container e2e. Default: Docker network alias (quack:quacktail-server:9494).
+# Tailnet IP ATTACH needs tsnet peer routing / tailscale_listen — set E2E_QUACK_ATTACH_VIA=tailnet to try.
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
-  local attach_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
-  if [[ "$attach_host" == "tailnet" ]]; then
-    headscale_ci_quack_uri_for_ip "$server_ip" "$port"
-  elif [[ "$attach_host" == "localhost" || "$attach_host" == "127.0.0.1" ]]; then
-    headscale_ci_quack_uri_local
-  else
-    headscale_ci_quack_uri_for_ip "$attach_host" "$port"
-  fi
+  local via="${E2E_QUACK_ATTACH_VIA:-docker}"
+  local server_host="${E2E_SERVER_HOST:-quacktail-server}"
+  case "$via" in
+    tailnet)
+      headscale_ci_quack_uri_for_ip "$server_ip" "$port"
+      ;;
+    docker)
+      headscale_ci_quack_uri_for_ip "$server_host" "$port"
+      ;;
+    localhost | 127.0.0.1)
+      headscale_ci_quack_uri_local
+      ;;
+    *)
+      headscale_ci_quack_uri_for_ip "$via" "$port"
+      ;;
+  esac
 }
 
 # Secret SCOPE must match the server URI (docs: SCOPE 'quack:localhost').
