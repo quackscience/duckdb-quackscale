@@ -9,12 +9,14 @@ The image pulls the **latest** [GitHub release](https://github.com/quackscience/
 ## Quick start
 
 ```bash
+git pull
 cd examples
-docker compose down --remove-orphans -v
-docker compose build
+docker compose build --no-cache quacktail-server quacktail-client
 docker compose up -d headscale quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```
+
+You should see one line `→ join tailnet, ATTACH quack:quacktail-server:9494, verify ...` (not two separate join/ATTACH steps). If you still see the old two-step messages, the client image was not rebuilt.
 
 Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profile only).
 
