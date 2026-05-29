@@ -123,18 +123,14 @@ fi
 export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
 # Server bootstrap: tailnet only (quack is loaded later for quack_serve).
-cat >"$WORK/server_bootstrap.sql" <<SQL
-CALL tailscale_up(
-    hostname => '${SERVER_HOST}',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${SERVER_STATE}',
-    ephemeral => true
-);
+{
+  headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
+  cat <<SQL
 
 CREATE TABLE e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
 INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
 SQL
+} >"$WORK/server_bootstrap.sql"
 
 e2e_run_duckdb "Joining server to Headscale (blocking)" "$SERVER_DB" "$WORK/server_bootstrap.sql" "$SERVER_LOG"
 
@@ -148,16 +144,13 @@ else
   exit 1
 fi
 
-cat >"$WORK/server_serve.sql" <<SQL
+{
+  cat <<SQL
 LOAD quack;
 
-CALL tailscale_up(
-    hostname => '${SERVER_HOST}',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${SERVER_STATE}',
-    ephemeral => true
-);
+SQL
+  headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
+  cat <<SQL
 
 CALL quack_serve(
     quack_uri(),
@@ -165,6 +158,7 @@ CALL quack_serve(
     token => quack_token()
 );
 SQL
+} >"$WORK/server_serve.sql"
 
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
@@ -185,16 +179,13 @@ echo "Waiting for Quack listener on ${SERVER_IP}:${QUACK_PORT} ..."
 headscale_ci_wait_tcp "$SERVER_IP" "$QUACK_PORT"
 echo "Quack listener is reachable on ${SERVER_IP}:${QUACK_PORT}"
 
-cat >"$WORK/client.sql" <<SQL
+{
+  cat <<SQL
 LOAD quack;
 
-CALL tailscale_up(
-    hostname => '${CLIENT_HOST}',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${CLIENT_STATE}',
-    ephemeral => true
-);
+SQL
+  headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CLIENT_STATE" "$AUTHKEY"
+  cat <<SQL
 
 CREATE SECRET (
     TYPE quack,

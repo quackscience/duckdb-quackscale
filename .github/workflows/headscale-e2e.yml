@@ -68,30 +68,26 @@ jobs:
           fi
 
       - name: DuckDB tailscale_up smoke
+        # Release binaries before the named-hostname fix require positional hostname (default).
+        # After publishing a release with that fix, set QUACKSCALE_TAILSCALE_UP_NAMED=1 here.
         run: |
           AUTHKEY="$(cat "$RUNNER_TEMP/headscale-authkey")"
           STATE="$RUNNER_TEMP/duckdb-tailscale-smoke"
           rm -rf "$STATE"
           mkdir -p "$STATE"
-          cat > "$RUNNER_TEMP/tailscale_smoke.sql" <<SQL
-          CALL tailscale_up(
-              hostname => 'gha-duckdb-smoke',
-              control_url => '${HEADSCALE_CONTROL_URL}',
-              authkey => '${AUTHKEY}',
-              state_dir => '${STATE}',
-              ephemeral => true
-          );
-          CALL tailscale_status();
-          SQL
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          {
+            headscale_ci_sql_tailscale_up "gha-duckdb-smoke" "$STATE" "$AUTHKEY"
+            echo "CALL tailscale_status();"
+          } > "$RUNNER_TEMP/tailscale_smoke.sql"
           echo "=== DuckDB tailscale_up smoke ==="
           echo "--- SQL ---"
           cat "$RUNNER_TEMP/tailscale_smoke.sql"
           echo "--- DuckDB output ---"
           "$DUCKDB" :memory: -batch -echo -f "$RUNNER_TEMP/tailscale_smoke.sql"
           echo "=== Headscale nodes after smoke ==="
-          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
-          # shellcheck source=scripts/lib/headscale_ci.sh
-          source scripts/lib/headscale_ci.sh
           headscale_ci_exec headscale nodes list || true
 
       - name: Run Headscale QuackTail e2e

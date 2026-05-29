@@ -248,11 +248,11 @@ static void QuackscaleLoginStatusFunction(ClientContext &context, TableFunctionI
 }
 
 static void LoadInternal(ExtensionLoader &loader) {
-	TableFunction up_function("tailscale_up", {LogicalType::VARCHAR}, QuackscaleUpFunction, QuackscaleUpBind);
+	TableFunction up_function("tailscale_up", {}, QuackscaleUpFunction, QuackscaleUpBind);
 	RegisterAuthParameters(up_function);
 	loader.RegisterFunction(up_function);
 
-	TableFunction login_function("tailscale_login", {LogicalType::VARCHAR}, QuackscaleBeginLoginFunction,
+	TableFunction login_function("tailscale_login", {}, QuackscaleBeginLoginFunction,
 	                             QuackscaleBeginLoginBind);
 	RegisterAuthParameters(login_function);
 	loader.RegisterFunction(login_function);

@@ -29,16 +29,10 @@ headscale_ci_verify_tailscale_client "$AUTHKEY" "headscale-preflight-smoke"
 STATE="$WORK/preflight-tailscale"
 rm -rf "$STATE"
 mkdir -p "$STATE"
-cat >"$WORK/preflight_tailscale.sql" <<SQL
-CALL tailscale_up(
-    hostname => 'headscale-preflight-duckdb',
-    control_url => '${HEADSCALE_CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${STATE}',
-    ephemeral => true
-);
-CALL tailscale_status();
-SQL
+{
+  headscale_ci_sql_tailscale_up "headscale-preflight-duckdb" "$STATE" "$AUTHKEY"
+  echo "CALL tailscale_status();"
+} >"$WORK/preflight_tailscale.sql"
 "$DUCKDB" :memory: -batch -echo -f "$WORK/preflight_tailscale.sql"
 
 headscale_ci_stop
