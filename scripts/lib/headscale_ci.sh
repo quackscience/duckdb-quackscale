@@ -136,18 +136,26 @@ PY
 
 headscale_ci_node_ipv4() {
   local hostname="${1:?node hostname}"
-  for _ in $(seq 1 60); do
+  local attempt=0
+  while (( attempt < 90 )); do
+    attempt=$((attempt + 1))
     local nodes_json ip
-    nodes_json="$(docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json)"
+    nodes_json="$(docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json 2>/dev/null || true)"
+    if [[ -z "$nodes_json" || "$nodes_json" == "null" ]]; then
+      sleep 2
+      continue
+    fi
     ip="$(
-      NODES_JSON="$nodes_json" python3 -c "
+      TARGET_HOST="$hostname" NODES_JSON="$nodes_json" python3 - <<'PY'
 import json, os, sys
 
 def as_list(value):
+    if value is None:
+        return []
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ('nodes', 'Nodes'):
+        for key in ("nodes", "Nodes"):
             if key in value and isinstance(value[key], list):
                 return value[key]
         return [value]
@@ -155,33 +163,50 @@ def as_list(value):
 
 def field(obj, *names):
     for name in names:
-        if name in obj and obj[name] is not None:
+        if isinstance(obj, dict) and name in obj and obj[name] is not None:
             return obj[name]
     return None
 
-hostname = sys.argv[1]
-for node in as_list(json.loads(os.environ['NODES_JSON'])):
-    name = field(node, 'givenName', 'given_name', 'name', 'Name') or ''
-    if name == hostname or name.startswith(hostname + '.'):
-        addrs = field(node, 'ipAddresses', 'ip_addresses', 'addresses', 'Addresses') or []
-        if isinstance(addrs, str):
-            addrs = [addrs]
-        for addr in addrs:
-            addr = str(addr)
-            if ':' not in addr:
-                print(addr)
-                sys.exit(0)
+def node_names(node):
+    names = []
+    for key in ("name", "Name", "givenName", "given_name", "hostname", "Hostname"):
+        value = field(node, key)
+        if value:
+            names.append(str(value))
+    return names
+
+def node_ipv4(node):
+    addrs = field(node, "ipAddresses", "ip_addresses", "addresses", "Addresses") or []
+    if isinstance(addrs, str):
+        addrs = [addrs]
+    for addr in addrs:
+        addr = str(addr)
+        if addr and ":" not in addr:
+            return addr
+    return ""
+
+target = os.environ["TARGET_HOST"]
+for node in as_list(json.loads(os.environ["NODES_JSON"])):
+    names = node_names(node)
+    if target in names or any(n.startswith(target + ".") for n in names):
+        ip = node_ipv4(node)
+        if ip:
+            print(ip)
+            sys.exit(0)
 sys.exit(1)
-" "$hostname" 2>/dev/null || true
-    )"
+PY
+    )" || true
     if [[ -n "$ip" ]]; then
       printf '%s' "$ip"
       return 0
     fi
+    if (( attempt % 10 == 0 )); then
+      echo "  still waiting for Headscale node '$hostname' (attempt $attempt)..." >&2
+    fi
     sleep 2
   done
   echo "error: no tailnet IPv4 found for node '$hostname'" >&2
-  docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json >&2 || true
+  docker exec "$HEADSCALE_CONTAINER" headscale nodes list >&2 || true
   return 1
 }
 

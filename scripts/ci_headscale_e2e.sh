@@ -48,10 +48,39 @@ if ! "$DUCKDB" -c "LOAD quack; SELECT 1;" >/dev/null 2>&1; then
   fi
 fi
 
+quackscale_e2e_duckdb_ipv4() {
+  local state_dir="${1:?state dir}"
+  local host="${2:?hostname}"
+  local authkey="${3:?authkey}"
+  local ip
+  ip="$(
+    export QUACK_TAILNET_TOKEN="${QUACK_TAILNET_TOKEN:-}"
+    "$DUCKDB" :memory: -csv -noheader -batch <<SQL 2>>"$SERVER_LOG" || true
+LOAD quackscale;
+CALL tailscale_up(
+    hostname => '${host}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${authkey}',
+    state_dir => '${state_dir}',
+    ephemeral => true
+);
+SELECT list_extract(tailnet_ips, 1) FROM tailscale_status();
+SQL
+  )"
+  ip="$(echo "$ip" | tr -d '[:space:]"' | head -1)"
+  if [[ -n "$ip" && "$ip" != "NULL" ]]; then
+    printf '%s' "$ip"
+    return 0
+  fi
+  return 1
+}
+
 headscale_ci_start "$HS_DATA"
 AUTHKEY="$(headscale_ci_create_authkey)"
+export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
-cat >"$WORK/server.sql" <<SQL
+echo "Joining server to Headscale (blocking)..."
+"$DUCKDB" "$SERVER_DB" -batch >>"$SERVER_LOG" 2>&1 <<SQL
 LOAD quack;
 LOAD quackscale;
 
@@ -65,6 +94,31 @@ CALL tailscale_up(
 
 CREATE TABLE e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
 INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
+SQL
+
+echo "Resolving server tailnet IP..."
+SERVER_IP=""
+if SERVER_IP="$(quackscale_e2e_duckdb_ipv4 "$SERVER_STATE" "$SERVER_HOST" "$AUTHKEY")"; then
+  echo "Server tailnet IP (from DuckDB): $SERVER_IP"
+elif SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST")"; then
+  echo "Server tailnet IP (from Headscale): $SERVER_IP"
+else
+  echo "error: could not determine server tailnet IP" >&2
+  tail -80 "$SERVER_LOG" >&2 || true
+  exit 1
+fi
+
+cat >"$WORK/server_serve.sql" <<SQL
+LOAD quack;
+LOAD quackscale;
+
+CALL tailscale_up(
+    hostname => '${SERVER_HOST}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${AUTHKEY}',
+    state_dir => '${SERVER_STATE}',
+    ephemeral => true
+);
 
 CALL quack_serve(
     quack_uri(),
@@ -73,28 +127,23 @@ CALL quack_serve(
 );
 SQL
 
-echo "Starting QuackTail server ($SERVER_HOST)..."
-export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
-python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/server.sql" "$SERVER_LOG" &
+echo "Starting Quack listener on server..."
+python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/server_serve.sql" "$SERVER_LOG" &
 SERVER_PID=$!
 
 sleep 2
 kill -0 "$SERVER_PID" || {
   echo "error: server process exited early" >&2
-  cat "$SERVER_LOG" >&2 || true
+  tail -80 "$SERVER_LOG" >&2 || true
   exit 1
 }
-
-echo "Waiting for server node on tailnet..."
-SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST")"
-echo "Server tailnet IP: $SERVER_IP"
 
 headscale_ci_wait_tcp "$SERVER_IP" "$QUACK_PORT"
 
 echo "Running QuackTail client ($CLIENT_HOST)..."
 CLIENT_OUT="$(
   export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
-  "$DUCKDB" :memory: <<SQL
+  "$DUCKDB" :memory: -batch <<SQL
 LOAD quack;
 LOAD quackscale;
 
@@ -115,7 +164,6 @@ CREATE SECRET (
 .mode csv
 .separator |
 
--- Client-side discovery (local endpoints; server reachability verified via ATTACH)
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
 SELECT 'discover_count', COUNT(*)::VARCHAR FROM _discover;
 
