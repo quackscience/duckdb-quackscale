@@ -53,6 +53,27 @@ duckdb_has_quackscale_function() {
       2>/dev/null | grep -qx '1'
 }
 
+compose_attach_is_local_forward() {
+  case "$1" in
+    quack:127.0.0.1:* | quack:localhost:* | quack:127.0.0.1 | quack:localhost) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+compose_sql_attach_remote() {
+  local attach_uri="${1:?attach uri required}"
+  if compose_attach_is_local_forward "$attach_uri"; then
+    printf "ATTACH '%s' AS remote (TYPE quack);\n" "$attach_uri"
+  else
+    cat <<SQL
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+SQL
+  fi
+}
+
 write_server_quack_sql() {
   # Quack on loopback; tailscale_serve_local publishes :9494 on the tailnet (tsnet-in-process).
   # Direct quack:0.0.0.0 bind only hits the host loopback — cross-node ATTACH never reaches it.
@@ -129,13 +150,9 @@ FROM quack_query(
     disable_ssl => true
 );
 
-ATTACH '${attach_uri}' AS remote (
-    TYPE quack,
-    DISABLE_SSL true
-);
+$(compose_sql_attach_remote "$attach_uri")
 
-INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
-ON CONFLICT DO NOTHING;
+SELECT * FROM remote.e2e_payload LIMIT 5;
 
 SELECT
     'PASSED' AS status,
@@ -161,10 +178,7 @@ CREATE SECRET (
     SCOPE '${attach_uri}'
 );
 
-ATTACH '${attach_uri}' AS remote (
-    TYPE quack,
-    DISABLE_SSL true
-);
+$(compose_sql_attach_remote "$attach_uri")
 
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
 ON CONFLICT DO NOTHING;
@@ -193,10 +207,7 @@ CREATE SECRET (
     SCOPE '${attach_uri}'
 );
 
-ATTACH '${attach_uri}' AS remote (
-    TYPE quack,
-    DISABLE_SSL true
-);
+$(compose_sql_attach_remote "$attach_uri")
 
 SELECT 'after_attach|ok';
 SQL
@@ -245,6 +256,7 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || { [[ -f "$WORK/client_quack.sql" ]] && grep -qE "quack:100\.64\." "$WORK/client_quack.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_proxy' "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"

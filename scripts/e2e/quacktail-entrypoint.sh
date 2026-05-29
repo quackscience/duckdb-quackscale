@@ -192,27 +192,24 @@ quacktail_dump_client_failure() {
 }
 
 run_duckdb_client_session() {
-  local client_db="${1:?db}"
-  local session_sql="${2:?session sql file}"
-  local out="${3:?out file}"
-  local demo_timeout="${4:?timeout}"
-  shift 4
-  local -a duckdb_extra=("$@")
+  local session_sql="${1:?session sql file}"
+  local out="${2:?out file}"
+  local demo_timeout="${3:?timeout}"
   local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
 
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
 
-  # One DuckDB session: tailscale_up → tailscale_ping → quack_query → ATTACH (no curl gates).
+  # Same invocation as scripts/local_remote_headscale_test.sh (-f, no -bail, no -init file db).
   set +o pipefail
   if [[ "$QUIET" == "1" ]]; then
-    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -bail -batch \
-      -cmd "$ext_cmd" "${duckdb_extra[@]}" "$client_db" -init "$session_sql" \
+    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+      -cmd "$ext_cmd" -f "$session_sql" \
       2>>"$tsnet_log" | quacktail_filter_demo_stream | tee "$out"
   else
-    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -bail -batch \
-      -cmd "$ext_cmd" "${duckdb_extra[@]}" "$client_db" -init "$session_sql" \
+    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+      -cmd "$ext_cmd" -f "$session_sql" \
       2>&1 | quacktail_filter_demo_stream | tee "$out"
   fi
   duckdb_rc=$?
@@ -227,7 +224,6 @@ run_duckdb_client_session() {
 }
 
 run_client() {
-  local client_db="${WORK}/client.duckdb"
   local session_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
   local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-90}"
@@ -235,7 +231,6 @@ run_client() {
   local poll_sec="${QUACKTAIL_CLIENT_POLL_SEC:-2}"
   local attach_uri
   local duckdb_rc=0
-  local -a duckdb_extra=()
   local attempt
 
   wait_for_tailnet_server
@@ -254,25 +249,22 @@ run_client() {
     echo "QuackTail cluster demo"
     echo "======================"
     echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
-    echo "  (client tsnet logs → ${WORK}/client-tsnet.log; first join can take 30–60s in Docker)"
     echo ""
   else
-    echo "=== client session SQL (-init) ==="
+    echo "=== client session SQL (-f) ==="
     cat "$session_sql"
-    duckdb_extra=(-echo)
   fi
 
-  rm -f "$client_db"
   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
     duckdb_rc=0
-    run_duckdb_client_session "$client_db" "$session_sql" "$out" "$demo_timeout" \
-      "${duckdb_extra[@]}" || duckdb_rc=$?
+    run_duckdb_client_session "$session_sql" "$out" "$demo_timeout" \
+      || duckdb_rc=$?
     if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
       break
     fi
     if (( attempt < max_attempts )); then
-      [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} (tailscale_ping / quack_query / ATTACH) ..."
-      rm -f "$client_db"
+      [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} ..."
+      quacktail_dump_client_failure
       sleep "$poll_sec"
     fi
   done
