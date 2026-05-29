@@ -15,12 +15,17 @@ if ! command -v headscale >/dev/null 2>&1; then
   exit 1
 fi
 
+HS_CFG="${HEADSCALE_CONFIG:-/etc/headscale/config.yaml}"
+HS=(headscale -c "$HS_CFG")
+
 mkdir -p "$WORK"
 
-headscale users create "$HS_USER" >/dev/null 2>&1 || true
+if ! "${HS[@]}" users create "$HS_USER" >/dev/null 2>&1; then
+  echo "note: headscale user '$HS_USER' may already exist" >&2
+fi
 
 USER_ID="$(
-  HS_USER="$HS_USER" headscale users list -o json | HS_USER="$HS_USER" python3 - <<'PY'
+  HS_USER="$HS_USER" "${HS[@]}" users list -o json | HS_USER="$HS_USER" python3 - <<'PY'
 import json, os, sys
 
 def field(obj, *names):
@@ -50,11 +55,11 @@ PY
 )" || true
 
 create_authkey() {
-  local -a cmd=(headscale preauthkeys create --reusable --expiration 168h)
+  local -a cmd=(preauthkeys create --reusable --expiration 168h)
   if [[ -n "${USER_ID:-}" ]]; then
     cmd+=(--user "$USER_ID")
   fi
-  "${cmd[@]}"
+  "${HS[@]}" "${cmd[@]}"
 }
 
 AUTHKEY="$(create_authkey 2>/dev/null | awk 'NF {k=$0} END {print k}')"
@@ -83,8 +88,8 @@ PY
 fi
 
 if [[ -z "$AUTHKEY" ]]; then
-  echo "error: failed to create Headscale authkey" >&2
-  headscale users list >&2 || true
+  echo "error: failed to create Headscale authkey (is headscale healthy and is /var/run/headscale shared?)" >&2
+  "${HS[@]}" users list >&2 || true
   exit 1
 fi
 

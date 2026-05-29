@@ -1,4 +1,5 @@
-# QuackTail + Headscale — Linux Docker Compose demo (latest GitHub release).
+# QuackTail + Headscale — three services only: headscale, quacktail-server, quacktail-client.
+# If you see bootstrap or wait-tailnet containers, reset: git pull && docker compose down --remove-orphans -v
 #
 #   cd examples
 #   docker compose up -d headscale quacktail-server
@@ -88,7 +89,7 @@ configs:
       logtail:
         enabled: false
       unix_socket: /var/run/headscale/headscale.sock
-      unix_socket_permission: "0770"
+      unix_socket_permission: "0777"
   headscale_policy:
     content: |
       {"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}
@@ -121,6 +122,13 @@ services:
       QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: server
       QUACKTAIL_AUTO_BOOTSTRAP: "1"
+      HEADSCALE_CONFIG: /etc/headscale/config.yaml
+    healthcheck:
+      test: [CMD, test, -f, /work/authkey]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 45s
     networks:
       quacktail:
         aliases: [quacktail-server]
@@ -129,12 +137,15 @@ services:
   quacktail-client:
     <<: *quacktail
     profiles: [test]
-    depends_on: [quacktail-server]
+    depends_on:
+      quacktail-server:
+        condition: service_healthy
     environment:
       <<: *env
       QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: client
       QUACKTAIL_WAIT_SERVER: quacktail-server
+      HEADSCALE_CONFIG: /etc/headscale/config.yaml
     restart: "no"
 
 volumes:

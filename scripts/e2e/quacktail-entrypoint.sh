@@ -37,6 +37,10 @@ wait_for_tailnet_server() {
   [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
   local node="$QUACKTAIL_WAIT_SERVER"
   local attempts="${QUACKTAIL_WAIT_ATTEMPTS:-90}"
+  local -a hs_cmd=(headscale)
+  if [[ -n "${HEADSCALE_CONFIG:-}" ]]; then
+    hs_cmd+=(-c "$HEADSCALE_CONFIG")
+  fi
   if ! command -v headscale >/dev/null 2>&1; then
     echo "warn: headscale CLI missing; skipping tailnet wait for ${node}" >&2
     return 0
@@ -44,14 +48,14 @@ wait_for_tailnet_server() {
   echo "Waiting for tailnet node ${node} ..."
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if headscale nodes list 2>/dev/null | grep -Fq "$node"; then
+    if "${hs_cmd[@]}" nodes list 2>/dev/null | grep -Fq "$node"; then
       echo "Tailnet node ${node} is registered."
       return 0
     fi
     sleep 2
   done
   echo "error: ${node} not registered on tailnet after ${attempts} attempts" >&2
-  headscale nodes list >&2 || true
+  "${hs_cmd[@]}" nodes list >&2 || true
   return 1
 }
 
