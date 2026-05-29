@@ -49,8 +49,9 @@ headscale_ci_ensure_user() {
 
 headscale_ci_user_id() {
   headscale_ci_ensure_user
-  docker exec "$HEADSCALE_CONTAINER" headscale users list -o json \
-    | HEADSCALE_CI_USER="$HEADSCALE_CI_USER" python3 - <<'PY'
+  local users_json
+  users_json="$(docker exec "$HEADSCALE_CONTAINER" headscale users list -o json)"
+  HEADSCALE_CI_USER="$HEADSCALE_CI_USER" USERS_JSON="$users_json" python3 - <<'PY'
 import json, os, sys
 
 def as_list(value):
@@ -70,7 +71,7 @@ def field(obj, *names):
     return None
 
 target = os.environ["HEADSCALE_CI_USER"]
-users = as_list(json.load(sys.stdin))
+users = as_list(json.loads(os.environ["USERS_JSON"]))
 for user in users:
     name = field(user, "name", "Name", "username", "Username")
     if name == target:
@@ -92,11 +93,11 @@ headscale_ci_create_authkey() {
     create_cmd+=(--user "$user_id")
   fi
 
-  local authkey
+  local authkey_json authkey
+  authkey_json="$(docker exec "$HEADSCALE_CONTAINER" "${create_cmd[@]}")"
   authkey="$(
-    docker exec "$HEADSCALE_CONTAINER" "${create_cmd[@]}" \
-      | python3 - <<'PY'
-import json, sys
+    AUTHKEY_JSON="$authkey_json" python3 - <<'PY'
+import json, os, sys
 
 def field(obj, *names):
     for name in names:
@@ -104,7 +105,7 @@ def field(obj, *names):
             return obj[name]
     return None
 
-raw = sys.stdin.read().strip()
+raw = os.environ.get("AUTHKEY_JSON", "").strip()
 if not raw:
     sys.exit(1)
 data = json.loads(raw)
@@ -136,11 +137,11 @@ PY
 headscale_ci_node_ipv4() {
   local hostname="${1:?node hostname}"
   for _ in $(seq 1 60); do
-    local ip
+    local nodes_json ip
+    nodes_json="$(docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json)"
     ip="$(
-      docker exec "$HEADSCALE_CONTAINER" headscale nodes list -o json \
-        | python3 -c "
-import json, sys
+      NODES_JSON="$nodes_json" python3 -c "
+import json, os, sys
 
 def as_list(value):
     if isinstance(value, list):
@@ -159,7 +160,7 @@ def field(obj, *names):
     return None
 
 hostname = sys.argv[1]
-for node in as_list(json.load(sys.stdin)):
+for node in as_list(json.loads(os.environ['NODES_JSON'])):
     name = field(node, 'givenName', 'given_name', 'name', 'Name') or ''
     if name == hostname or name.startswith(hostname + '.'):
         addrs = field(node, 'ipAddresses', 'ip_addresses', 'addresses', 'Addresses') or []
