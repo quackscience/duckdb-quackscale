@@ -46,5 +46,5 @@ jobs:
 
       - name: Run Headscale smoke test
         run: |
-          chmod +x scripts/ci_headscale_smoke.sh
+          chmod +x scripts/ci_headscale_smoke.sh scripts/lib/headscale_ci.sh
           ./scripts/ci_headscale_smoke.sh

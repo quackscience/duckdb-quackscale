@@ -1,0 +1,60 @@
+# Two-node QuackTail e2e: Headscale + server/client DuckDB over Quack (shared token).
+name: Headscale QuackTail e2e
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/headscale-e2e.yml'
+      - 'scripts/ci_headscale_e2e.sh'
+      - 'scripts/lib/headscale_ci.sh'
+      - 'scripts/ci_headscale_smoke.sh'
+      - 'test/headscale/**'
+      - 'test/e2e/**'
+      - 'src/**'
+      - 'cmake/**'
+      - 'extension_config*.cmake'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/headscale-e2e.yml'
+      - 'scripts/ci_headscale_e2e.sh'
+      - 'scripts/lib/headscale_ci.sh'
+      - 'test/headscale/**'
+      - 'test/e2e/**'
+      - 'src/**'
+      - 'cmake/**'
+
+jobs:
+  quacktail-e2e:
+    name: Headscale two-node QuackTail e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+
+      - name: Pin DuckDB v1.5.3 (Quack core extension)
+        run: |
+          cd duckdb
+          git fetch --tags --depth 1 origin tag v1.5.3
+          git checkout v1.5.3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build ccache curl python3
+
+      - name: Build QuackScale (DuckDB v1.5.3)
+        run: GEN=ninja make release
+
+      - name: Run Headscale QuackTail e2e
+        run: |
+          chmod +x scripts/ci_headscale_e2e.sh scripts/ci_headscale_smoke.sh scripts/lib/headscale_ci.sh
+          ./scripts/ci_headscale_e2e.sh

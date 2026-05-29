@@ -79,7 +79,8 @@ Then run the smoke script (after `make release`):
 | Workflow | What it validates |
 |----------|-------------------|
 | [libtailscale-integration.yml](../.github/workflows/libtailscale-integration.yml) | libtailscale `go test` (tstestcontrol) |
-| [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | Real Headscale + `CALL tailscale_up` + `tailscale_status` |
+| [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | Headscale + `CALL tailscale_up` smoke |
+| [headscale-e2e.yml](../.github/workflows/headscale-e2e.yml) | Two-node QuackTail: shared token, discover, INSERT/SELECT over Quack |
 
 ## Notes
 

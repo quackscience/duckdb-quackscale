@@ -115,7 +115,7 @@ Planned:
 - `quack_serve_on_tailnet(port, ...)` — orchestrate Quack when `quack` is loaded
 - Settings: default port, auto-load `quack`, state directory
 - [x] Headscale CI smoke (`scripts/ci_headscale_smoke.sh`, `.github/workflows/headscale-integration.yml`)
-- [ ] Two-node QuackTail e2e over Headscale (client `ATTACH` + `quack_query`)
+- [x] Two-node QuackTail e2e over Headscale ([`scripts/ci_headscale_e2e.sh`](../scripts/ci_headscale_e2e.sh), [`.github/workflows/headscale-e2e.yml`](../.github/workflows/headscale-e2e.yml))
 
 ## Repository layout
 

@@ -191,7 +191,14 @@ make test
 
 SQL unit tests do not require a live tailnet or `QUACK_TAILNET_TOKEN`.
 
-Optional integration (Docker + Headscale): `./scripts/ci_headscale_smoke.sh` after `make release`.
+Optional integration (Docker + Headscale):
+
+```sh
+./scripts/ci_headscale_smoke.sh          # tailscale_up smoke
+./scripts/ci_headscale_e2e.sh            # two-node QuackTail (needs DuckDB v1.5.3+ / quack)
+```
+
+See [test/e2e/README.md](test/e2e/README.md).
 
 ## Based on
 
