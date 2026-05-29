@@ -1,4 +1,4 @@
-# Two-node QuackTail e2e over Headscale. Manual only — uses pre-built release binaries.
+# QuackTail e2e over Headscale — three isolated jobs (manual; release binaries).
 name: Headscale QuackTail e2e
 
 on:
@@ -14,17 +14,30 @@ env:
   HEADSCALE_HOST: headscale
   HEADSCALE_CONTROL_URL: http://headscale:8080
   HEADSCALE_MAGICDNS_BASE_DOMAIN: quackscale-ci.test
+  E2E_QUACK_ATTACH_HOST: ip
+  E2E_CLIENT_TIMEOUT_SEC: 180
+  E2E_CROSS_NODE_GATE_ATTEMPTS: 60
+  E2E_CROSS_NODE_POLL_SEC: 2
+  E2E_TAILNET_MESH_WAIT_SEC: 0
+  E2E_CLIENT_MESH_WAIT_SEC: 0
 
 jobs:
-  quacktail-e2e:
-    name: Headscale QuackTail e2e (linux)
+  # A. Headscale smoke — control plane + one Tailscale client join (no QuackTail Docker).
+  headscale-smoke:
+    name: A — Headscale smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download QuackTail release binary
+        run: |
+          chmod +x scripts/ci_download_release_duckdb.sh
+          eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
+          echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
+          "$DUCKDB" -version || "$DUCKDB" --version
 
       - name: Start Headscale
         run: |
@@ -35,17 +48,40 @@ jobs:
           source scripts/lib/headscale_ci.sh
           headscale_ci_start "$HEADSCALE_DATA_DIR"
 
-      - name: Verify Headscale
+      - name: Headscale + tailscale_up smoke
         run: |
           export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
           # shellcheck source=scripts/lib/headscale_ci.sh
           source scripts/lib/headscale_ci.sh
-          curl -v "$HEADSCALE_CONTROL_URL/health"
+          curl -fsS "$HEADSCALE_CONTROL_URL/health"
           AUTHKEY="$(headscale_ci_create_authkey)"
-          echo "authkey_len=${#AUTHKEY}"
           headscale_ci_verify_tailscale_client "$AUTHKEY" "gha-headscale-smoke"
-          echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
-          chmod 600 "$RUNNER_TEMP/headscale-authkey"
+          STATE="$RUNNER_TEMP/duckdb-tailscale-smoke"
+          rm -rf "$STATE"
+          mkdir -p "$STATE"
+          {
+            headscale_ci_sql_tailscale_up "gha-duckdb-smoke" "$STATE" "$AUTHKEY"
+            echo "CALL tailscale_status();"
+          } | "$DUCKDB" :memory: -batch -echo
+          headscale_ci_exec headscale nodes list
+
+      - name: Stop Headscale
+        if: always()
+        run: |
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_stop
+
+  # B. Server publish smoke — server container + quack_serve + tailscale_serve_local self-reach.
+  server-publish-smoke:
+    name: B — Server publish smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Download QuackTail release binary
         run: |
@@ -53,75 +89,100 @@ jobs:
           eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
           echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
           "$DUCKDB" -version || "$DUCKDB" --version
-          echo "=== quackscale (built-in) ==="
-          "$DUCKDB" :memory: -csv -c \
-            "SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quackscale';"
-          echo "=== tailscale_serve_local ==="
           "$DUCKDB" :memory: -csv -c \
             "SELECT function_name FROM duckdb_functions() WHERE function_name='tailscale_serve_local';"
-          echo "=== tailscale_status ==="
-          "$DUCKDB" :memory: -batch -echo -c "CALL tailscale_status();"
 
-      - name: DuckDB tailscale_up smoke
+      - name: Install quack extension (host cache)
+        env:
+          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
         run: |
-          AUTHKEY="$(cat "$RUNNER_TEMP/headscale-authkey")"
-          STATE="$RUNNER_TEMP/duckdb-tailscale-smoke"
-          rm -rf "$STATE"
-          mkdir -p "$STATE"
+          echo "DUCKDB_EXTENSION_DIRECTORY=$DUCKDB_EXTENSION_DIRECTORY" >> "$GITHUB_ENV"
+          chmod +x scripts/ci_ensure_quack.sh scripts/lib/quacktail_ci.sh scripts/lib/quacktail_ext.sh
+          ./scripts/ci_ensure_quack.sh
+
+      - name: Start Headscale
+        run: |
+          chmod +x scripts/lib/headscale_ci.sh
           export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          export HEADSCALE_DATA_DIR="$RUNNER_TEMP/headscale-data"
           # shellcheck source=scripts/lib/headscale_ci.sh
           source scripts/lib/headscale_ci.sh
-          {
-            headscale_ci_sql_tailscale_up "gha-duckdb-smoke" "$STATE" "$AUTHKEY"
-            echo "CALL tailscale_status();"
-          } > "$RUNNER_TEMP/tailscale_smoke.sql"
-          echo "=== DuckDB tailscale_up smoke ==="
-          echo "--- SQL ---"
-          cat "$RUNNER_TEMP/tailscale_smoke.sql"
-          echo "--- DuckDB output ---"
-          "$DUCKDB" :memory: -batch -echo -f "$RUNNER_TEMP/tailscale_smoke.sql"
-          echo "=== Headscale nodes after smoke ==="
-          headscale_ci_exec headscale nodes list || true
+          headscale_ci_start "$HEADSCALE_DATA_DIR"
 
-      - name: Install quack extension
+      - name: Run server publish smoke
+        env:
+          HEADSCALE_ALREADY_RUNNING: "1"
+          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
         run: |
-          set -euo pipefail
-          EXT_DIR="$RUNNER_TEMP/duckdb_extensions"
-          mkdir -p "$EXT_DIR"
-          echo "DUCKDB_EXTENSION_DIRECTORY=$EXT_DIR" >> "$GITHUB_ENV"
-          export DUCKDB_EXTENSION_DIRECTORY="$EXT_DIR"
-          SET_EXT="SET extension_directory='${EXT_DIR}';"
-          if ! "$DUCKDB" :memory: -batch -c "${SET_EXT} LOAD quack; SELECT 1;"; then
-            "$DUCKDB" :memory: -batch -c "${SET_EXT} INSTALL quack FROM core; LOAD quack; SELECT 1;" \
-              || "$DUCKDB" :memory: -batch -c "${SET_EXT} INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
-          fi
-          loaded="$("$DUCKDB" :memory: -batch -csv -noheader -c \
-            "${SET_EXT} LOAD quack; SELECT loaded FROM duckdb_extensions() WHERE extension_name='quack';" \
-            | tail -1 | tr -d '[:space:]')"
-          if [[ "$loaded" != "true" ]]; then
-            echo "error: quack failed to load (loaded=$loaded)" >&2
-            exit 1
-          fi
-          "$DUCKDB" :memory: -batch -echo -c "
-            ${SET_EXT}
-            LOAD quack;
-            SELECT extension_name, loaded, install_path
-            FROM duckdb_extensions()
-            WHERE extension_name='quack';
-          "
+          chmod +x scripts/ci_quacktail_server_smoke.sh scripts/lib/quacktail_ci.sh scripts/e2e/quacktail-entrypoint.sh
+          ./scripts/ci_quacktail_server_smoke.sh
 
-      - name: Run Headscale QuackTail e2e
+      - name: Stop Headscale
+        if: always()
+        run: |
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          export QUACKTAIL_CI_ROOT="$GITHUB_WORKSPACE"
+          # shellcheck source=scripts/lib/quacktail_ci.sh
+          source scripts/lib/quacktail_ci.sh
+          quacktail_ci_stop
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_stop
+
+      - name: Upload server smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-publish-smoke-logs
+          path: .e2e-work-server-smoke/
+          if-no-files-found: warn
+
+  # C. Cross-node transport e2e — client polls until server reachable, then ATTACH.
+  quacktail-cross-node-e2e:
+    name: C — Cross-node QuackTail e2e
+    runs-on: ubuntu-latest
+    needs: [headscale-smoke, server-publish-smoke]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download QuackTail release binary
+        run: |
+          chmod +x scripts/ci_download_release_duckdb.sh
+          eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
+          echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
+          "$DUCKDB" -version || "$DUCKDB" --version
+
+      - name: Install quack extension (host cache)
+        env:
+          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
+        run: |
+          echo "DUCKDB_EXTENSION_DIRECTORY=$DUCKDB_EXTENSION_DIRECTORY" >> "$GITHUB_ENV"
+          chmod +x scripts/ci_ensure_quack.sh scripts/lib/quacktail_ci.sh scripts/lib/quacktail_ext.sh
+          ./scripts/ci_ensure_quack.sh
+
+      - name: Start Headscale
+        run: |
+          chmod +x scripts/lib/headscale_ci.sh
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          export HEADSCALE_DATA_DIR="$RUNNER_TEMP/headscale-data"
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_start "$HEADSCALE_DATA_DIR"
+          AUTHKEY="$(headscale_ci_create_authkey)"
+          echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
+          chmod 600 "$RUNNER_TEMP/headscale-authkey"
+
+      - name: Run cross-node QuackTail e2e
         env:
           HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
           SKIP_HEADSCALE_VERIFY: "1"
           HEADSCALE_ALREADY_RUNNING: "1"
           DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
         run: |
-          set -euo pipefail
           chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh scripts/lib/quacktail_ci.sh scripts/e2e/quacktail-entrypoint.sh
-          export DUCKDB_EXTENSION_DIRECTORY="$DUCKDB_EXTENSION_DIRECTORY"
-          SET_EXT="SET extension_directory='${DUCKDB_EXTENSION_DIRECTORY}';"
-          "$DUCKDB" :memory: -batch -echo -c "${SET_EXT} LOAD quack; SELECT 1;"
           ./scripts/ci_headscale_e2e.sh
 
       - name: Stop Headscale
@@ -140,6 +201,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: headscale-e2e-logs
+          name: quacktail-cross-node-e2e-logs
           path: .e2e-work/
           if-no-files-found: warn

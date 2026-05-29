@@ -472,16 +472,16 @@ headscale_ci_quack_uri_local() {
   echo "quack:127.0.0.1"
 }
 
-# Client ATTACH URI — tailscale hostname + --add-host (default); ip or magicdns via env.
+# Client ATTACH URI — tailnet IP by default; hostname/magicdns via env for DNS tests.
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
   local server_host="${E2E_SERVER_HOST:-quacktail-server}"
-  case "${E2E_QUACK_ATTACH_HOST:-hostname}" in
+  case "${E2E_QUACK_ATTACH_HOST:-ip}" in
     ip) headscale_ci_quack_uri_for_ip "$server_ip" "$port" ;;
     magicdns) headscale_ci_quack_client_uri "$server_host" "$port" ;;
     hostname) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
-    *) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
+    *) headscale_ci_quack_uri_for_ip "$server_ip" "$port" ;;
   esac
 }
 

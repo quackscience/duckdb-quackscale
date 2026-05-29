@@ -6,6 +6,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/e2e/quacktail-entrypoint.sh /usr/local/bin/quacktail-entrypoint.sh
+COPY scripts/lib/quacktail_ext.sh /usr/local/lib/quacktail_ext.sh
 RUN chmod +x /usr/local/bin/quacktail-entrypoint.sh
 
 ENV DUCKDB_BIN=/usr/local/bin/duckdb

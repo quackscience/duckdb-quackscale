@@ -4,8 +4,8 @@
 #   sleep infinity | duckdb -init /path/to/init.sql
 # https://github.com/duckdb/duckdb-quack-infra/blob/main/boot.sh
 #
-# Client: one long-lived DuckDB (-init tailscale_up), then bash mesh wait + cross-node
-# curl gate, then ATTACH/queries on the same stdin stream (tsnet stays up throughout).
+# Client: one long-lived DuckDB (-init tailscale_up), poll cross-node HTTP until
+# the server is reachable, then ATTACH/queries on the same stdin stream.
 set -euo pipefail
 
 DUCKDB="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
@@ -15,48 +15,24 @@ WORK="${QUACKTAIL_WORK:-/work}"
 DB="${WORK}/server.duckdb"
 INIT_SQL="${WORK}/server_init.sql"
 
+# shellcheck source=/dev/null
+source /usr/local/lib/quacktail_ext.sh
+
 if [[ ! -x "$DUCKDB" ]]; then
   echo "error: DuckDB not found or not executable at $DUCKDB" >&2
   exit 1
 fi
 
 ensure_quack() {
-  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(headscale_ci_container_extension_directory 2>/dev/null || echo /duckdb_extensions)}"
-  mkdir -p "$ext_dir"
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
   export DUCKDB_EXTENSION_DIRECTORY="$ext_dir"
-  echo "=== extension_directory=${ext_dir} (SET in SQL; env is mount hint only) ==="
-  echo "=== ensure quack extension ==="
-  local set_cmd="SET extension_directory='${ext_dir}';"
-  if "$DUCKDB" :memory: -batch -c "${set_cmd} LOAD quack; SELECT 1;"; then
-    :
-  else
-    echo "Installing quack (core, then core_nightly) ..."
-    if ! "$DUCKDB" :memory: -batch -c "${set_cmd} INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
-      "$DUCKDB" :memory: -batch -c "${set_cmd} INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
-    fi
-  fi
-  local loaded install_path
-  loaded="$("$DUCKDB" :memory: -batch -csv -noheader -c \
-    "${set_cmd} LOAD quack; SELECT loaded FROM duckdb_extensions() WHERE extension_name='quack';" \
-    | tail -1 | tr -d '[:space:]')"
-  install_path="$("$DUCKDB" :memory: -batch -csv -noheader -c \
-    "${set_cmd} LOAD quack; SELECT install_path FROM duckdb_extensions() WHERE extension_name='quack';" \
-    | tail -1 | tr -d '[:space:]')"
-  if [[ "$loaded" != "true" ]]; then
-    echo "error: quack failed to load (loaded=$loaded path=$install_path)" >&2
-    exit 1
-  fi
-  if [[ "$install_path" != "${ext_dir}"* ]]; then
-    echo "error: quack install_path not under extension_directory ($install_path)" >&2
-    exit 1
-  fi
-  "$DUCKDB" :memory: -batch -echo -c \
-    "${set_cmd} LOAD quack; SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
+  echo "=== extension_directory=${ext_dir} (load from host cache) ==="
+  quacktail_ci_ensure_quack "$DUCKDB" "$ext_dir" load_only
 }
 
 quacktail_sql_extension_directory() {
-  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-/duckdb_extensions}"
-  echo "SET extension_directory='${ext_dir}';"
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
+  quacktail_ext_sql_set "$ext_dir"
 }
 
 quacktail_curl_tailnet_http() {
@@ -67,6 +43,26 @@ quacktail_curl_tailnet_http() {
   local code
   code="$(curl -sS -m 3 -o /dev/null -w '%{http_code}' "http://${host}:${port}/" 2>/dev/null || echo 000)"
   [[ "$code" != "000" ]]
+}
+
+wait_for_cross_node_quack() {
+  local host="${1:?host}"
+  local port="${2:?port}"
+  local attempts="${3:-${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}}"
+  local poll_sec="${E2E_CROSS_NODE_POLL_SEC:-2}"
+  local i
+
+  for (( i = 1; i <= attempts; i++ )); do
+    echo "=== tailnet TCP gate attempt ${i}/${attempts}: curl http://${host}:${port}/ (cross-node) ===" >&2
+    if quacktail_curl_tailnet_http "$host" "$port"; then
+      echo "ok: cross-node tailnet TCP gate passed (${host}:${port})" >&2
+      return 0
+    fi
+    sleep "$poll_sec"
+  done
+
+  echo "error: cross-node tailnet TCP gate failed (${host}:${port}) after ${attempts} attempts" >&2
+  return 1
 }
 
 run_server() {
@@ -87,8 +83,9 @@ run_client() {
   ensure_quack
   local client_db="${WORK}/client.duckdb"
   local server_ip="${E2E_SERVER_IP:?E2E_SERVER_IP required for client}"
-  local gate_host="${E2E_SERVER_HOST:-$server_ip}"
-  local mesh_wait="${E2E_CLIENT_MESH_WAIT_SEC:-3}"
+  local gate_host="${E2E_CROSS_NODE_GATE_HOST:-$server_ip}"
+  local mesh_wait="${E2E_CLIENT_MESH_WAIT_SEC:-0}"
+  local gate_attempts="${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}"
 
   if [[ ! -f "${WORK}/client_init.sql" || ! -f "${WORK}/client_attach.sql" ]]; then
     echo "error: missing ${WORK}/client_init.sql or client_attach.sql" >&2
@@ -97,17 +94,15 @@ run_client() {
 
   echo "=== client init SQL (-init; DuckDB stays running for ATTACH) ==="
   cat "${WORK}/client_init.sql"
-  echo "=== client attach SQL (after mesh wait + cross-node curl gate) ==="
+  echo "=== client attach SQL (after cross-node poll gate) ==="
+  echo "Cross-node gate target: ${gate_host}:${PORT} (attempts=${gate_attempts})" >&2
   cat "${WORK}/client_attach.sql"
 
   {
-    sleep "$mesh_wait"
-    echo "=== tailnet TCP gate: curl http://${gate_host}:${PORT}/ (cross-node) ===" >&2
-    if ! quacktail_curl_tailnet_http "$gate_host" "$PORT"; then
-      echo "error: cross-node tailnet TCP gate failed (${gate_host}:${PORT})" >&2
-      exit 1
+    if (( mesh_wait > 0 )); then
+      sleep "$mesh_wait"
     fi
-    echo "ok: cross-node tailnet TCP gate passed (${gate_host}:${PORT})" >&2
+    wait_for_cross_node_quack "$gate_host" "$PORT" "$gate_attempts"
     cat "${WORK}/client_attach.sql"
   } | "$DUCKDB" -cmd "$(quacktail_sql_extension_directory)" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
 }

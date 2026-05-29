@@ -12,8 +12,8 @@ QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-e2e-shared-token}"
 SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
-CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-30}"
-TAILNET_MESH_WAIT="${E2E_TAILNET_MESH_WAIT_SEC:-3}"
+CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-180}"
+TAILNET_MESH_WAIT="${E2E_TAILNET_MESH_WAIT_SEC:-0}"
 export E2E_SERVER_HOST="$SERVER_HOST"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
@@ -54,10 +54,11 @@ fi
 
 echo "Using DuckDB: $DUCKDB"
 echo "E2e work directory: $WORK"
-echo "E2e: Quack on loopback + tailscale_serve_local → tailnet ATTACH"
+echo "E2e: cross-node transport only (Headscale + server + client + ATTACH)"
 
 export DUCKDB_EXTENSION_DIRECTORY="${DUCKDB_EXTENSION_DIRECTORY:-$WORK/duckdb_extensions}"
-quacktail_ci_verify_duckdb_quack "$DUCKDB"
+quacktail_ci_docker_ext_setup
+quacktail_ci_ensure_quack "$DUCKDB" "$DUCKDB_EXTENSION_DIRECTORY" install
 
 quacktail_ci_build_image "$ROOT"
 
@@ -122,8 +123,10 @@ SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT"
 SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
 echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
 
-echo "Waiting ${TAILNET_MESH_WAIT}s for tailnet mesh ..."
-sleep "$TAILNET_MESH_WAIT"
+if (( TAILNET_MESH_WAIT > 0 )); then
+  echo "Optional fixed mesh wait: ${TAILNET_MESH_WAIT}s (cross-node readiness is polled in client) ..."
+  sleep "$TAILNET_MESH_WAIT"
+fi
 
 {
   headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
