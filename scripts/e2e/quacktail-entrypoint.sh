@@ -27,7 +27,36 @@ quacktail_sql_extension_directory() {
   quacktail_ext_sql_set "${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
 }
 
+maybe_compose_bootstrap() {
+  [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
+  [[ -f "${WORK}/server_setup.sql" ]] && return 0
+  /usr/local/bin/quacktail-compose-bootstrap.sh
+}
+
+wait_for_tailnet_server() {
+  [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
+  local node="$QUACKTAIL_WAIT_SERVER"
+  local attempts="${QUACKTAIL_WAIT_ATTEMPTS:-90}"
+  if ! command -v headscale >/dev/null 2>&1; then
+    echo "warn: headscale CLI missing; skipping tailnet wait for ${node}" >&2
+    return 0
+  fi
+  echo "Waiting for tailnet node ${node} ..."
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if headscale nodes list 2>/dev/null | grep -Fq "$node"; then
+      echo "Tailnet node ${node} is registered."
+      return 0
+    fi
+    sleep 2
+  done
+  echo "error: ${node} not registered on tailnet after ${attempts} attempts" >&2
+  headscale nodes list >&2 || true
+  return 1
+}
+
 run_server() {
+  maybe_compose_bootstrap
   ensure_quack
   cat "${WORK}/server_setup.sql" "${WORK}/server_quack.sql" >"$INIT_SQL"
   echo "=== server init SQL ==="
@@ -37,6 +66,7 @@ run_server() {
 }
 
 run_client() {
+  wait_for_tailnet_server
   ensure_quack
   local client_db="${WORK}/client.duckdb"
 

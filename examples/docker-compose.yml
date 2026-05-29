@@ -1,18 +1,14 @@
 # QuackTail + Headscale — Linux Docker Compose demo (latest GitHub release).
 #
 #   cd examples
-#   docker compose up -d headscale bootstrap quacktail-server
+#   docker compose up -d headscale quacktail-server
 #   docker compose --profile test run --rm quacktail-client
 #
 # One-liner:
-#   docker compose up -d headscale bootstrap quacktail-server && \
+#   docker compose up -d headscale quacktail-server && \
 #   docker compose --profile test run --rm quacktail-client
 
 name: quacktail-demo
-
-# Headscale 0.28+ serve image is distroless (no shell). Use -debug for one-shot CLI jobs.
-x-headscale-serve: &headscale_serve headscale/headscale:0.28.0
-x-headscale-cli: &headscale_cli headscale/headscale:0.28.0-debug
 
 x-env: &env
   QUACK_PORT: "9494"
@@ -23,7 +19,7 @@ x-env: &env
   CLIENT_HOST: quacktail-client
   DUCKDB_EXTENSION_DIRECTORY: /duckdb_extensions
 
-x-headscale: &headscale_mounts
+x-headscale-volumes: &headscale_volumes
   configs:
     - source: headscale_config
       target: /etc/headscale/config.yaml
@@ -41,7 +37,11 @@ x-quacktail: &quacktail
       GITHUB_REPO: ${GITHUB_REPO:-quackscience/duckdb-quackscale}
   cap_add: [NET_ADMIN]
   devices: [/dev/net/tun]
-  volumes: [quacktail-work:/work]
+  <<: *headscale_volumes
+  volumes:
+    - quacktail-work:/work
+    - headscale-data:/var/lib/headscale
+    - headscale-run:/var/run/headscale
   environment:
     <<: *env
     QUACKTAIL_WORK: /work
@@ -95,8 +95,8 @@ configs:
 
 services:
   headscale:
-    image: *headscale_serve
-    <<: *headscale_mounts
+    image: headscale/headscale:0.28.0
+    <<: *headscale_volumes
     command: serve
     ports:
       - "127.0.0.1:8080:8080"
@@ -110,159 +110,31 @@ services:
       quacktail:
         aliases: [headscale]
 
-  bootstrap:
-    image: *headscale_cli
-    <<: *headscale_mounts
-    depends_on:
-      headscale:
-        condition: service_healthy
-    volumes:
-      - headscale-data:/var/lib/headscale
-      - headscale-run:/var/run/headscale
-      - quacktail-work:/work
-    environment:
-      <<: *env
-      WORK: /work
-      PATH: /ko-app:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    networks: [quacktail]
-    restart: "no"
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        mkdir -p "$$WORK"
-        headscale users create "$$HEADSCALE_USER" 2>/dev/null || true
-        AUTHKEY=$$(headscale preauthkeys create --reusable --expiration 168h | awk 'NF {k=$$0} END {print k}')
-        [ -n "$$AUTHKEY" ] || { echo "error: failed to create authkey" >&2; exit 1; }
-        printf '%s' "$$AUTHKEY" >"$$WORK/authkey"
-        chmod 600 "$$WORK/authkey"
-
-        cat >"$$WORK/server_setup.sql" <<SQL
-        CALL tailscale_up(
-            hostname => '$$SERVER_HOST',
-            control_url => '$$HEADSCALE_CONTROL_URL',
-            authkey => '$$AUTHKEY',
-            state_dir => '/work/server-tailscale',
-            ephemeral => true
-        );
-
-        CREATE TABLE IF NOT EXISTS e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
-        DELETE FROM e2e_payload;
-        INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
-        SQL
-
-        cat >"$$WORK/server_quack.sql" <<SQL
-        SET extension_directory='/duckdb_extensions';
-        LOAD quack;
-
-        CALL quack_serve(
-            quack_uri(),
-            allow_other_hostname => true,
-            token => quack_token()
-        );
-        SQL
-
-        cat >"$$WORK/client_init.sql" <<SQL
-        SET extension_directory='/duckdb_extensions';
-        LOAD quack;
-
-        CALL tailscale_up(
-            hostname => '$$CLIENT_HOST',
-            control_url => '$$HEADSCALE_CONTROL_URL',
-            authkey => '$$AUTHKEY',
-            state_dir => '/work/client-tailscale',
-            ephemeral => true
-        );
-
-        SELECT 'client_tailscale_up|done';
-        SQL
-
-        ATTACH_URI="quack:$$SERVER_HOST:$$QUACK_PORT"
-
-        cat >"$$WORK/client_attach.sql" <<SQL
-        CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
-        SELECT 'discover_count|' || COUNT(*)::VARCHAR;
-
-        SELECT 'before_quack_query|$$ATTACH_URI';
-
-        SELECT 'quack_query_probe|' || CAST(q AS VARCHAR)
-        FROM quack_query(
-            '$$ATTACH_URI',
-            'SELECT 1 AS q',
-            token => '$$QUACK_TAILNET_TOKEN',
-            disable_ssl => true
-        );
-
-        SELECT 'before_attach|$$ATTACH_URI';
-
-        CREATE SECRET (
-            TYPE quack,
-            TOKEN '$$QUACK_TAILNET_TOKEN',
-            SCOPE '$$ATTACH_URI'
-        );
-
-        ATTACH '$$ATTACH_URI' AS remote (
-            TYPE quack,
-            DISABLE_SSL true
-        );
-
-        SELECT 'after_attach|ok';
-        SQL
-
-        cat >"$$WORK/client_queries.sql" <<SQL
-        INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
-
-        SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
-        SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
-        SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
-        SQL
-
-        echo "bootstrap ok — ATTACH $$ATTACH_URI"
-
   quacktail-server:
     <<: *quacktail
     container_name: quacktail-server
     depends_on:
-      bootstrap:
-        condition: service_completed_successfully
+      headscale:
+        condition: service_healthy
     environment:
       <<: *env
+      QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: server
+      QUACKTAIL_AUTO_BOOTSTRAP: "1"
     networks:
       quacktail:
         aliases: [quacktail-server]
     restart: unless-stopped
 
-  wait-tailnet:
-    profiles: [test]
-    image: *headscale_cli
-    <<: *headscale_mounts
-    depends_on: [quacktail-server]
-    environment:
-      SERVER_HOST: quacktail-server
-      PATH: /ko-app:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    networks: [quacktail]
-    restart: "no"
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        echo "Waiting for $$SERVER_HOST on tailnet..."
-        for i in $$(seq 1 90); do
-          headscale nodes list 2>/dev/null | grep -Fq "$$SERVER_HOST" && exit 0
-          sleep 2
-        done
-        echo "error: $$SERVER_HOST not registered" >&2
-        headscale nodes list >&2 || true
-        exit 1
-
   quacktail-client:
     <<: *quacktail
     profiles: [test]
-    depends_on:
-      wait-tailnet:
-        condition: service_completed_successfully
+    depends_on: [quacktail-server]
     environment:
       <<: *env
+      QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: client
+      QUACKTAIL_WAIT_SERVER: quacktail-server
     restart: "no"
 
 volumes:
