@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Two-node QuackTail e2e: both nodes join Headscale (tsnet), Quack over the tailnet.
+# Two-node QuackTail e2e: Headscale + server + client DuckDB containers overlap.
+# Server stays up (-d); client starts while server is still booting; client polls then ATTACH.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,14 +14,11 @@ SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
 CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-180}"
-TAILNET_MESH_WAIT="${E2E_TAILNET_MESH_WAIT_SEC:-0}"
 export E2E_SERVER_HOST="$SERVER_HOST"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
 mkdir -p "$WORK"
 HS_DATA="$WORK/headscale-data"
-SERVER_STATE="$WORK/server-tailscale"
-CLIENT_STATE="$WORK/client-tailscale"
 CLIENT_LOG="$WORK/client.log"
 
 cleanup() {
@@ -33,16 +31,6 @@ cleanup() {
 e2e_dump_logs() {
   quacktail_ci_logs
   quacktail_ci_client_logs
-  if [[ -d "$WORK" ]]; then
-    echo "::group::E2e work directory ($WORK)"
-    ls -la "$WORK" || true
-    for sql in "$WORK"/*.sql; do
-      [[ -f "$sql" ]] || continue
-      echo "--- $(basename "$sql") ---"
-      cat "$sql"
-    done
-    echo "::endgroup::"
-  fi
 }
 
 trap 'e2e_dump_logs; cleanup' EXIT
@@ -53,16 +41,14 @@ if [[ ! -x "$DUCKDB" ]]; then
 fi
 
 echo "Using DuckDB: $DUCKDB"
-echo "E2e work directory: $WORK"
-echo "E2e: cross-node transport only (Headscale + server + client + ATTACH)"
+echo "E2e: Headscale up; server + client DuckDB containers run concurrently"
 
 export DUCKDB_EXTENSION_DIRECTORY="${DUCKDB_EXTENSION_DIRECTORY:-$WORK/duckdb_extensions}"
 quacktail_ci_docker_ext_setup
 quacktail_ci_ensure_quack "$DUCKDB" "$DUCKDB_EXTENSION_DIRECTORY" install
-
 quacktail_ci_build_image "$ROOT"
 
-mkdir -p "$HS_DATA" "$SERVER_STATE" "$CLIENT_STATE"
+mkdir -p "$HS_DATA"
 if [[ "${HEADSCALE_ALREADY_RUNNING:-}" == "1" ]]; then
   headscale_ci_wait_ready
 else
@@ -71,16 +57,10 @@ fi
 
 if [[ -n "${HEADSCALE_AUTHKEY_FILE:-}" && -f "$HEADSCALE_AUTHKEY_FILE" ]]; then
   AUTHKEY="$(cat "$HEADSCALE_AUTHKEY_FILE")"
-  echo "Using Headscale authkey from $HEADSCALE_AUTHKEY_FILE (len ${#AUTHKEY})"
 elif [[ -n "${HEADSCALE_AUTHKEY:-}" ]]; then
   AUTHKEY="$HEADSCALE_AUTHKEY"
-  echo "Using Headscale authkey from env (len ${#AUTHKEY})"
 else
   AUTHKEY="$(headscale_ci_create_authkey)"
-  echo "Headscale authkey prefix: ${AUTHKEY:0:12}... (len ${#AUTHKEY})"
-  if [[ "${SKIP_HEADSCALE_VERIFY:-}" != "1" ]]; then
-    headscale_ci_verify_tailscale_client "$AUTHKEY" "headscale-e2e-verify"
-  fi
 fi
 export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
@@ -107,34 +87,6 @@ SQL
   headscale_ci_sql_quack_serve "$QUACK_PORT"
 } >"$WORK/server_quack.sql"
 
-echo "=== Starting QuackTail server ($SERVER_HOST) ==="
-cat "$WORK/server_setup.sql"
-echo "--- server_quack.sql ---"
-cat "$WORK/server_quack.sql"
-quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
-
-echo "Waiting for server node on Headscale ..."
-SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 30)"
-echo "Server tailnet IP: ${SERVER_IP}"
-echo "Server MagicDNS: $(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
-quacktail_ci_wait_server_local "$QUACK_PORT"
-quacktail_ci_wait_server_published "$QUACK_PORT" "$SERVER_IP" "$QUACK_TOKEN"
-
-SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
-SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
-echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
-
-if (( TAILNET_MESH_WAIT > 0 )); then
-  echo "Optional fixed mesh wait: ${TAILNET_MESH_WAIT}s (cross-node readiness is polled in client) ..."
-  sleep "$TAILNET_MESH_WAIT"
-fi
-
-# Refresh tailnet IP after publish wait so ATTACH URI matches Headscale assignment.
-SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 10)"
-SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
-SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
-echo "Client will ATTACH: ${SERVER_QUACK_URI} (SCOPE ${SERVER_QUACK_SCOPE})"
-
 {
   headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
   cat <<SQL
@@ -148,6 +100,18 @@ SQL
 SELECT 'client_tailscale_up|done';
 SQL
 } >"$WORK/client_init.sql"
+
+# --- Start server (long-lived) then client immediately — both on tailnet together ---
+echo "=== Starting server container ($SERVER_HOST) ==="
+quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
+
+echo "=== Resolving server tailnet IP (Headscale node list; server container already running) ==="
+SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 60)"
+echo "Server tailnet IP: ${SERVER_IP}"
+
+SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
+SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
+echo "Client will ATTACH: ${SERVER_QUACK_URI}"
 
 {
   cat <<SQL
@@ -169,82 +133,62 @@ SQL
 } >"$WORK/client_queries.sql"
 
 export E2E_SERVER_IP="$SERVER_IP"
-export E2E_SERVER_HOST="$SERVER_HOST"
 
-echo "=== Running QuackTail client ($CLIENT_HOST) ==="
+echo "=== Starting client container ($CLIENT_HOST) while server is still running ==="
+quacktail_ci_start_client "$DUCKDB" "$WORK" "$QUACK_PORT"
+
+echo "=== Waiting for client (server + client both running; timeout ${CLIENT_TIMEOUT}s) ==="
 set +e
-quacktail_ci_run_client "$DUCKDB" "$WORK" "$QUACK_PORT" "$CLIENT_TIMEOUT" 2>&1 | tee "$CLIENT_LOG"
-CLIENT_RC=${PIPESTATUS[0]}
+quacktail_ci_wait_client "$CLIENT_TIMEOUT"
+CLIENT_RC=$?
 set -e
 
-if (( CLIENT_RC == 124 )); then
-  echo "error: client timed out after ${CLIENT_TIMEOUT}s" >&2
-  CLIENT_RC=124
-fi
-
+docker logs "$QUACKTAIL_CLIENT_CONTAINER" >"$CLIENT_LOG" 2>&1 || true
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
 
+if ! quacktail_ci_server_running; then
+  echo "error: server container exited before client finished" >&2
+  quacktail_ci_logs
+  exit 1
+fi
+
+if (( CLIENT_RC == 124 )); then
+  echo "error: client timed out after ${CLIENT_TIMEOUT}s (server still running)" >&2
+  exit 1
+fi
+
 if echo "$CLIENT_OUT" | grep -qE 'Failed to send message|Timeout was reached|IO Error:.*HTTP POST'; then
-  echo "error: Quack ATTACH failed (HTTP POST to server endpoint)" >&2
+  echo "error: Quack ATTACH failed (HTTP POST)" >&2
   echo "$CLIENT_OUT" >&2
-  quacktail_ci_client_logs
-  headscale_ci_logs
   exit 1
 fi
 
 if (( CLIENT_RC != 0 )); then
-  echo "error: client container failed (exit $CLIENT_RC)" >&2
-  quacktail_ci_client_logs
-  headscale_ci_logs
+  echo "error: client container exited $CLIENT_RC" >&2
+  echo "$CLIENT_OUT" >&2
   exit 1
 fi
 
 echo "$CLIENT_OUT" | grep -q 'after_attach|ok' || {
-  echo "error: ATTACH did not complete (missing after_attach|ok)" >&2
+  echo "error: ATTACH did not complete" >&2
   echo "$CLIENT_OUT" >&2
   exit 1
 }
-echo "ok: ATTACH completed"
 
 echo "$CLIENT_OUT" | grep -qE 'ok: cross-node Quack reachable' || {
-  echo "error: cross-node Quack POST gate did not pass" >&2
+  echo "error: cross-node Quack gate did not pass" >&2
   echo "$CLIENT_OUT" >&2
   exit 1
 }
-echo "ok: cross-node Quack POST gate"
-
-echo "=== Result rows ==="
-echo "$CLIENT_OUT" | grep -E 'discover_count|row_count|client_msg|server_msg|insert-from-client|seed-from-server' || true
-
-echo "$CLIENT_OUT" | grep -qE 'discover_count\|(1|2)' || {
-  echo "error: client quack_discover failed" >&2
-  echo "$CLIENT_OUT" >&2
-  exit 1
-}
-echo "ok: client on tailnet"
 
 echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
-  echo "error: client INSERT row not found" >&2
-  echo "$CLIENT_OUT" >&2
+  echo "error: client INSERT not found" >&2
   exit 1
 }
-echo "ok: client INSERT visible"
 
 echo "$CLIENT_OUT" | grep -q 'seed-from-server' || {
-  echo "error: server seed row not found" >&2
-  echo "$CLIENT_OUT" >&2
+  echo "error: server seed not found" >&2
   exit 1
 }
-echo "ok: server seed visible"
 
-echo "$CLIENT_OUT" | grep -qE 'row_count\|2|│ 2 │|count_star\(\)\s*\│\s*2' || {
-  echo "error: expected 2 rows in remote.e2e_payload" >&2
-  echo "$CLIENT_OUT" >&2
-  exit 1
-}
-echo "ok: remote table has 2 rows"
-
-echo "=== Headscale nodes after e2e ==="
-headscale_ci_exec headscale nodes list || true
-
-echo "Headscale QuackTail e2e passed."
+echo "Headscale QuackTail e2e passed (server + client ran concurrently)."

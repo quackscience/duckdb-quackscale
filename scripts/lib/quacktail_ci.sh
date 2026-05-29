@@ -189,34 +189,24 @@ quacktail_ci_container_http_open() {
   [[ "$code" != "000" ]]
 }
 
-quacktail_ci_run_client() {
+quacktail_ci_start_client() {
   local duckdb_bin="${1:?duckdb binary path}"
   local work_dir="${2:?work directory}"
   local port="${3:-9494}"
-  local timeout_sec="${4:-${E2E_CLIENT_TIMEOUT_SEC:-180}}"
 
   quacktail_ci_require_docker
   docker rm -f "$QUACKTAIL_CLIENT_CONTAINER" >/dev/null 2>&1 || true
 
   local server_host="${E2E_SERVER_HOST:-quacktail-server}"
   local server_ip="${E2E_SERVER_IP:?E2E_SERVER_IP must be set}"
-  local attach_host="${E2E_QUACK_ATTACH_HOST:-ip}"
-  local docker_host_args=()
-
-  if [[ "$attach_host" == "hostname" || "$attach_host" == "magicdns" ]]; then
-    docker_host_args=(--add-host "${server_host}:${server_ip}")
-    echo "Client /etc/hosts override: ${server_host} -> ${server_ip}"
-  else
-    echo "Client cross-node gate/ATTACH use tailnet IP ${server_ip} (no /etc/hosts override)"
-  fi
 
   quacktail_ci_docker_ext_setup
-  echo "Running QuackTail client container (timeout ${timeout_sec}s) ..."
-  timeout "$timeout_sec" docker run --name "$QUACKTAIL_CLIENT_CONTAINER" \
+  echo "Starting client container '$QUACKTAIL_CLIENT_CONTAINER' (server still running) ..."
+  echo "Client ATTACH/gate target: ${server_ip}:${port}"
+  docker run -d --name "$QUACKTAIL_CLIENT_CONTAINER" \
     --cap-add=NET_ADMIN \
     --device=/dev/net/tun \
     --network "$HEADSCALE_DOCKER_NETWORK" \
-    "${docker_host_args[@]}" \
     -v "${work_dir}:/work" \
     -v "${duckdb_bin}:/usr/local/bin/duckdb:ro" \
     "${QUACKTAIL_DOCKER_EXT_ARGS[@]}" \
@@ -225,12 +215,35 @@ quacktail_ci_run_client() {
     -e "QUACK_PORT=${port}" \
     -e "E2E_SERVER_IP=${server_ip}" \
     -e "E2E_SERVER_HOST=${server_host}" \
-    -e "E2E_CLIENT_MESH_WAIT_SEC=${E2E_CLIENT_MESH_WAIT_SEC:-0}" \
     -e "E2E_CROSS_NODE_GATE_ATTEMPTS=${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}" \
     -e "E2E_CROSS_NODE_POLL_SEC=${E2E_CROSS_NODE_POLL_SEC:-2}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     -e "QUACK_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     "$QUACKTAIL_IMAGE"
+}
+
+quacktail_ci_wait_client() {
+  local timeout_sec="${1:-${E2E_CLIENT_TIMEOUT_SEC:-180}}"
+  local exit_code=0
+  if ! exit_code="$(timeout "$timeout_sec" docker wait "$QUACKTAIL_CLIENT_CONTAINER" 2>/dev/null)"; then
+    local rc=$?
+    if (( rc == 124 )); then
+      docker rm -f "$QUACKTAIL_CLIENT_CONTAINER" >/dev/null 2>&1 || true
+      return 124
+    fi
+    return "$rc"
+  fi
+  return "$exit_code"
+}
+
+# Foreground client (local debugging).
+quacktail_ci_run_client() {
+  local duckdb_bin="${1:?duckdb binary path}"
+  local work_dir="${2:?work directory}"
+  local port="${3:-9494}"
+  local timeout_sec="${4:-${E2E_CLIENT_TIMEOUT_SEC:-180}}"
+  quacktail_ci_start_client "$duckdb_bin" "$work_dir" "$port"
+  quacktail_ci_wait_client "$timeout_sec"
 }
 
 quacktail_ci_client_logs() {
