@@ -77,17 +77,28 @@ wait_for_tailnet_server() {
 }
 
 # Cross-node Quack readiness (caller must already be on the tailnet).
-wait_for_server_quack() {
-  [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
-  local server_ip="${E2E_SERVER_IP:-}"
-  if [[ -z "$server_ip" ]] && command -v headscale >/dev/null 2>&1; then
-    server_ip="$(headscale_cmd nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true)"
-  fi
-  if [[ -z "$server_ip" ]]; then
-    echo "warn: could not resolve ${SERVER_HOST} tailnet IP for Quack readiness gate" >&2
+resolve_server_tailnet_ip() {
+  headscale_cmd nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+ensure_server_hosts_mapping() {
+  local ip
+  ip="$(resolve_server_tailnet_ip)"
+  if [[ -z "$ip" ]]; then
+    echo "warn: could not resolve ${SERVER_HOST} tailnet IP for /etc/hosts" >&2
     return 0
   fi
-  quacktail_wait_quack_endpoint "$server_ip" "$PORT" "${QUACK_TAILNET_TOKEN:-}" "${SERVER_HOST} Quack"
+  if [[ "$QUIET" == "1" ]]; then
+    echo "→ ${SERVER_HOST} → ${ip} (/etc/hosts, matches server quack_uri())"
+  else
+    echo "Mapping ${SERVER_HOST} -> ${ip} in /etc/hosts"
+  fi
+  if grep -qE "[[:space:]]${SERVER_HOST}$" /etc/hosts 2>/dev/null; then
+    grep -vE "[[:space:]]${SERVER_HOST}$" /etc/hosts > /etc/hosts.quacktail || true
+    cat /etc/hosts.quacktail > /etc/hosts
+    rm -f /etc/hosts.quacktail
+  fi
+  echo "${ip} ${SERVER_HOST}" >> /etc/hosts
 }
 
 run_server() {
@@ -216,6 +227,8 @@ run_client() {
   local -a duckdb_extra=()
 
   wait_for_tailnet_server
+  ensure_quack
+  ensure_server_hosts_mapping
   ensure_client_sql
   attach_uri="$(client_attach_uri)"
   if [[ -z "$attach_uri" ]]; then
@@ -223,16 +236,12 @@ run_client() {
     exit 1
   fi
 
+  write_client_session_sql "$session_sql"
+
   if [[ "$QUIET" == "1" ]]; then
     echo ""
     echo "QuackTail cluster demo"
     echo "======================"
-  fi
-
-  ensure_quack
-  write_client_session_sql "$session_sql"
-
-  if [[ "$QUIET" == "1" ]]; then
     echo "→ join tailnet as ${CLIENT_HOST}, ATTACH ${attach_uri}, verify read/write ..."
     echo ""
   else

@@ -53,7 +53,12 @@ Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profil
 ```
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-→ join tailnet as quacktail-client, ATTACH quack:100.64.x.x:9494, verify read/write ...
+→ quacktail-server → 100.64.x.x (/etc/hosts, matches server quack_uri())
+✓ client SQL ready — attach quack:quacktail-server:9494
+
+QuackTail cluster demo
+======================
+→ join tailnet as quacktail-client, ATTACH quack:quacktail-server:9494, verify read/write ...
 
 (tailscale_status, Success, PASSED summary — typically under 10s)
 

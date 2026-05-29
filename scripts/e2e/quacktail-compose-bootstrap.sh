@@ -28,13 +28,8 @@ resolve_server_tailnet_ip() {
 }
 
 resolve_attach_uri() {
-  local ip
-  ip="$(resolve_server_tailnet_ip)"
-  if [[ -n "$ip" ]]; then
-    echo "quack:${ip}:${QUACK_PORT}"
-  else
-    echo "quack:${SERVER_HOST}:${QUACK_PORT}"
-  fi
+  # Match server quack_uri() (hostname) — CI adds --add-host; compose adds /etc/hosts in entrypoint.
+  echo "quack:${SERVER_HOST}:${QUACK_PORT}"
 }
 
 write_client_init_sql() {
