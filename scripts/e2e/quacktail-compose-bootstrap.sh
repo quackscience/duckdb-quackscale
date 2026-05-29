@@ -266,6 +266,7 @@ SELECT 'after_attach|ok';
 SQL
 
 cat >"$WORK/client_queries.sql" <<SQL
+DELETE FROM remote.e2e_payload WHERE source = 'client';
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
 
 SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
