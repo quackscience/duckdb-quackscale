@@ -23,4 +23,4 @@ eval "$(./scripts/ci_download_release_duckdb.sh latest)"
 ./scripts/ci_headscale_e2e.sh
 ```
 
-Requires a **quackscale build** that includes `tailscale_serve_local` (this repo). Release binaries must be rebuilt after upgrading.
+GitHub Actions: **Headscale QuackTail e2e** (`workflow_dispatch`, `release_tag` defaults to latest). The release must include `tailscale_serve_local`.
