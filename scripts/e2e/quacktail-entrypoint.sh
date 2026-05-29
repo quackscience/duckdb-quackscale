@@ -32,9 +32,10 @@ quacktail_sql_extension_directory() {
 
 maybe_compose_bootstrap() {
   [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
-  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_demo.sql" && -f "${WORK}/client_init.sql" ]] \
+  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_quack.sql" && -f "${WORK}/client_init.sql" ]] \
     || /usr/local/bin/quacktail-compose-bootstrap.sh
-  if [[ -f "${WORK}/client_demo.sql" ]] && grep -q '_discover AS' "${WORK}/client_demo.sql" 2>/dev/null; then
+  if [[ -f "${WORK}/client_quack.sql" ]] \
+    && grep -q 'NOT EXISTS' "${WORK}/client_quack.sql" 2>/dev/null; then
     /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
 }
@@ -108,20 +109,21 @@ run_client_verbose() {
   ensure_quack
   local client_db="${WORK}/client.duckdb"
 
+  ensure_client_sql
+
   echo "=== client init SQL ==="
   cat "${WORK}/client_init.sql"
-  echo "=== client attach SQL (quack_query probe + ATTACH) ==="
+  echo "=== client quack SQL ==="
   cat "${WORK}/client_attach.sql"
   [[ -f "${WORK}/client_queries.sql" ]] && cat "${WORK}/client_queries.sql"
 
   {
+    cat "${WORK}/client_init.sql"
     cat "${WORK}/client_attach.sql"
     [[ -f "${WORK}/client_queries.sql" ]] && cat "${WORK}/client_queries.sql"
-  } | "$DUCKDB" -bail -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    -init "${WORK}/client_init.sql" -batch -echo
+  } | "$DUCKDB" -bail -cmd "$(quacktail_sql_extension_directory)" "$client_db" -batch -echo
 }
 
-# Drop DuckDB -init banner and libtailscale stderr noise in quiet demo mode.
 quacktail_filter_demo_stream() {
   if [[ "${QUACKTAIL_QUIET:-0}" != "1" ]]; then
     cat
@@ -130,13 +132,13 @@ quacktail_filter_demo_stream() {
   grep -v -E '^-- Loading resources from |^20[0-9]{2}/[0-9]{2}/[0-9]{2} '
 }
 
-ensure_client_demo_sql() {
+ensure_client_sql() {
   if [[ ! -f "${WORK}/authkey" ]]; then
     echo "error: ${WORK}/authkey missing (is quacktail-server running?)" >&2
     exit 1
   fi
   COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
-  if [[ ! -f "${WORK}/client_demo.sql" ]] || [[ ! -f "${WORK}/client_init.sql" ]]; then
+  if [[ ! -f "${WORK}/client_quack.sql" ]] || [[ ! -f "${WORK}/client_init.sql" ]]; then
     echo "error: client SQL not generated" >&2
     exit 1
   fi
@@ -144,13 +146,14 @@ ensure_client_demo_sql() {
 
 run_client_demo() {
   local client_db="${WORK}/client.duckdb"
-  local attach_uri="quack:${SERVER_HOST}:${PORT}"
-  local demo_sql="${WORK}/client_demo.sql"
+  local attach_uri
+  attach_uri="$(grep -E "^ATTACH '" "${WORK}/client_quack.sql" | head -1 | sed -E "s/^ATTACH '([^']+)'.*/\1/")"
+  local combined_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
   local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-300}"
   local duckdb_rc=0
 
-  ensure_client_demo_sql
+  ensure_client_sql
 
   echo ""
   echo "QuackTail cluster demo"
@@ -159,14 +162,11 @@ run_client_demo() {
   ensure_quack
   wait_for_server_quack
 
-  echo "→ join tailnet as ${CLIENT_HOST}, discover, ATTACH ${attach_uri} ..."
+  echo "→ join tailnet as ${CLIENT_HOST}, ATTACH ${attach_uri}, verify read/write ..."
   echo ""
 
-  local client_init="${WORK}/client_init.sql"
-  local combined_sql="${WORK}/client_session.sql"
-  cat "$client_init" "$demo_sql" >"$combined_sql"
+  cat "${WORK}/client_init.sql" "${WORK}/client_quack.sql" >"$combined_sql"
 
-  # One DuckDB session: tailscale_up + discover + ATTACH + DML (same session keeps tsnet up).
   set +o pipefail
   timeout "$demo_timeout" bash -c '
     cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "$4"

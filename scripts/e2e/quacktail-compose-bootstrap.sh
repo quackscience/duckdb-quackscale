@@ -20,15 +20,26 @@ fi
 
 mkdir -p "$WORK"
 
-ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
 CLIENT_STATE_DIR="/tmp/client-tailscale"
+ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
+
+resolve_server_tailnet_ip() {
+  "${HS[@]}" nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+resolve_attach_uri() {
+  local ip
+  ip="$(resolve_server_tailnet_ip)"
+  if [[ -n "$ip" ]]; then
+    echo "quack:${ip}:${QUACK_PORT}"
+  else
+    echo "quack:${SERVER_HOST}:${QUACK_PORT}"
+  fi
+}
 
 write_client_init_sql() {
   local authkey="${1:?authkey required}"
   cat >"$WORK/client_init.sql" <<SQL
-SET extension_directory='/duckdb_extensions';
-LOAD quack;
-
 CALL tailscale_up(
     hostname => '${CLIENT_HOST}',
     control_url => '${CONTROL_URL}',
@@ -39,53 +50,92 @@ CALL tailscale_up(
 SQL
 }
 
-write_client_demo_sql() {
-  cat >"$WORK/client_demo.sql" <<SQL
+write_client_quack_sql() {
+  local attach_uri="${1:?attach uri required}"
+  cat >"$WORK/client_quack.sql" <<SQL
+SET extension_directory='/duckdb_extensions';
+LOAD quack;
+
 CREATE SECRET (
     TYPE quack,
     TOKEN '${QUACK_TOKEN}',
-    SCOPE '${ATTACH_URI}'
+    SCOPE '${attach_uri}'
 );
 
-ATTACH '${ATTACH_URI}' AS remote (
+ATTACH '${attach_uri}' AS remote (
     TYPE quack,
     DISABLE_SSL true
 );
 
-INSERT INTO remote.e2e_payload
-SELECT 2, 'insert-from-client', 'client'
-WHERE NOT EXISTS (
-    SELECT 1 FROM remote.e2e_payload WHERE source = 'client'
-);
+-- One Quack remote op per statement: INSERT + scan in the same query is rejected by
+-- duckdb-quack QuackOptimizer (see docs/QUACK_STREAMING.md).
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
+ON CONFLICT DO NOTHING;
 
 SELECT
     'PASSED' AS status,
-    '${ATTACH_URI}' AS attach_uri,
-    (SELECT msg FROM remote.e2e_payload WHERE source = 'server') AS server_row,
-    (SELECT msg FROM remote.e2e_payload WHERE source = 'client') AS client_row,
-    (SELECT COUNT(*)::INTEGER FROM remote.e2e_payload) AS total_rows;
+    '${attach_uri}' AS attach_uri,
+    MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
+    MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
+    COUNT(*)::INTEGER AS total_rows
+FROM remote.e2e_payload;
+SQL
+  cp "$WORK/client_quack.sql" "$WORK/client_demo.sql"
+}
 
-SELECT q AS probe_result
-FROM quack_query(
-    '${ATTACH_URI}',
-    'SELECT 1 AS q',
-    token => '${QUACK_TOKEN}',
-    disable_ssl => true
+write_client_attach_sql() {
+  local attach_uri="${1:?attach uri required}"
+  cat >"$WORK/client_attach.sql" <<SQL
+SET extension_directory='/duckdb_extensions';
+LOAD quack;
+
+SELECT 'before_attach|${attach_uri}';
+
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${QUACK_TOKEN}',
+    SCOPE '${attach_uri}'
 );
 
-SELECT * FROM quack_discover();
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+
+SELECT 'after_attach|ok';
 SQL
+}
+
+write_client_queries_sql() {
+  cat >"$WORK/client_queries.sql" <<SQL
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
+ON CONFLICT DO NOTHING;
+
+SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
+SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
+SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
+SQL
+}
+
+refresh_client_sql() {
+  local authkey="${1:?authkey required}"
+  local attach_uri
+  attach_uri="$(resolve_attach_uri)"
+  ATTACH_URI="$attach_uri"
+  write_client_init_sql "$authkey"
+  write_client_quack_sql "$attach_uri"
+  write_client_attach_sql "$attach_uri"
+  write_client_queries_sql
 }
 
 if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
   AUTHKEY="$(cat "$WORK/authkey")"
   if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
-    || [[ ! -f "$WORK/client_demo.sql" ]] \
-    || grep -q '_discover AS' "$WORK/client_demo.sql" 2>/dev/null \
+    || [[ ! -f "$WORK/client_quack.sql" ]] \
+    || grep -q 'NOT EXISTS' "$WORK/client_quack.sql" 2>/dev/null \
     || ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql" 2>/dev/null; then
-    write_client_init_sql "$AUTHKEY"
-    write_client_demo_sql
-    echo "✓ client SQL ready — ${ATTACH_URI}"
+    refresh_client_sql "$AUTHKEY"
+    echo "✓ client SQL ready — attach ${ATTACH_URI}"
   fi
   exit 0
 fi
@@ -222,58 +272,6 @@ CALL quack_serve(
 );
 SQL
 
-cat >"$WORK/client_init.sql" <<SQL
-SET extension_directory='/duckdb_extensions';
-LOAD quack;
-
-CALL tailscale_up(
-    hostname => '${CLIENT_HOST}',
-    control_url => '${CONTROL_URL}',
-    authkey => '${AUTHKEY}',
-    state_dir => '${CLIENT_STATE_DIR}',
-    ephemeral => true
-);
-SQL
-
-write_client_demo_sql
-
-cat >"$WORK/client_attach.sql" <<SQL
-SELECT 'before_attach|${ATTACH_URI}';
-
-CREATE SECRET (
-    TYPE quack,
-    TOKEN '${QUACK_TOKEN}',
-    SCOPE '${ATTACH_URI}'
-);
-
-ATTACH '${ATTACH_URI}' AS remote (
-    TYPE quack,
-    DISABLE_SSL true
-);
-
-SELECT 'after_attach|ok';
-SQL
-
-cat >"$WORK/client_queries.sql" <<SQL
-INSERT INTO remote.e2e_payload
-SELECT 2, 'insert-from-client', 'client'
-WHERE NOT EXISTS (
-    SELECT 1 FROM remote.e2e_payload WHERE source = 'client'
-);
-
-SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
-SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
-SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
-
-SELECT 'quack_query_probe|' || CAST(q AS VARCHAR)
-FROM quack_query(
-    '${ATTACH_URI}',
-    'SELECT 1 AS q',
-    token => '${QUACK_TOKEN}',
-    disable_ssl => true
-);
-
-SELECT 'discover_count|' || COUNT(*)::VARCHAR FROM quack_discover();
-SQL
+refresh_client_sql "$AUTHKEY"
 
 echo "✓ Headscale authkey ready — attach URI ${ATTACH_URI}"

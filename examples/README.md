@@ -30,21 +30,23 @@ Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profil
   (libtailscale logs → /work/server.log)
 ```
 
-**Client** — one DuckDB session (tailnet join stays up for discover + ATTACH). libtailscale logs stream live via `tee`:
+**Client** — one DuckDB session: join tailnet, `ATTACH` over server tailnet IP, insert + verify:
 
 ```
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-→ join tailnet as quacktail-client, discover, ATTACH quack:quacktail-server:9494 ...
+→ waiting for quacktail-server Quack ...
+✓ quacktail-server Quack ready
+→ join tailnet as quacktail-client, ATTACH quack:100.64.x.x:9494, verify read/write ...
 
-(tailscale_status table, probe_result, PASSED summary, quack_discover — streamed as they run)
+(tailscale_status, Success, PASSED summary)
 
 ✓ Demo passed — two-node QuackTail cluster is working
 ```
 
-That table confirms: tailnet join, `quack_discover`, `quack_query`, `ATTACH`, read from server, write from client.
+That confirms: tailnet join, `ATTACH`, read from server, write from client.
 
-Re-running the client is safe: the client insert is idempotent (`WHERE NOT EXISTS`). The server clears `e2e_payload` only when the server container starts.
+Re-running the client is safe: insert uses `ON CONFLICT DO NOTHING`. The server clears `e2e_payload` only when the server container starts.
 
 Verbose DuckDB/SQL logging is off by default (`QUACKTAIL_QUIET=1`). Set `QUACKTAIL_QUIET=0` in compose or `.env` to debug.
 
@@ -112,3 +114,5 @@ docker compose --profile test down --remove-orphans -v
 **Stale `bootstrap` / `wait-tailnet` containers** — old compose file; run `git pull`, then `docker compose down --remove-orphans -v` and rebuild.
 
 **Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`
+
+**`Multiple streaming scans or streaming scans + CTAS / insert`** — this is a **`quack` extension** planner limit, not QuackScale. It fires when one SQL statement both reads and writes the same attached Quack catalog (e.g. `INSERT … WHERE NOT EXISTS (SELECT … FROM remote.t)`). See [docs/QUACK_STREAMING.md](../docs/QUACK_STREAMING.md).

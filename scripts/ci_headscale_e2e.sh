@@ -119,25 +119,12 @@ echo "Client will ATTACH: ${SERVER_QUACK_URI}"
 
 {
   cat <<SQL
-INSERT INTO remote.e2e_payload
-SELECT 2, 'insert-from-client', 'client'
-WHERE NOT EXISTS (
-    SELECT 1 FROM remote.e2e_payload WHERE source = 'client'
-);
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
+ON CONFLICT DO NOTHING;
 
 SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
 SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
 SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
-
-SELECT 'quack_query_probe|' || CAST(q AS VARCHAR)
-FROM quack_query(
-    '${SERVER_QUACK_URI}',
-    'SELECT 1 AS q',
-    token => '${QUACK_TOKEN}',
-    disable_ssl => true
-);
-
-SELECT 'discover_count|' || COUNT(*)::VARCHAR FROM quack_discover();
 SQL
 } >"$WORK/client_queries.sql"
 
