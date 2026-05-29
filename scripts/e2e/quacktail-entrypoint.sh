@@ -72,12 +72,12 @@ run_client() {
 
   {
     sleep "$mesh_wait"
-    echo "=== tailnet TCP gate: curl http://${server_ip}:${PORT}/ (cross-node from client container) ==="
+    echo "=== tailnet TCP gate: curl http://${server_ip}:${PORT}/ (cross-node) ===" >&2
     if ! quacktail_curl_tailnet_http "$server_ip" "$PORT"; then
       echo "error: cross-node tailnet TCP gate failed (${server_ip}:${PORT})" >&2
       exit 1
     fi
-    echo "ok: cross-node tailnet TCP gate passed (${server_ip}:${PORT})"
+    echo "ok: cross-node tailnet TCP gate passed (${server_ip}:${PORT})" >&2
     cat "${WORK}/client_attach.sql"
   } | "$DUCKDB" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
 }
