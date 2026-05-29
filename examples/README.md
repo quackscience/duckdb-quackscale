@@ -1,74 +1,71 @@
 # QuackTail Docker Compose example
 
-Two-node **Headscale + QuackTail** stack on Linux. The image always pulls the **latest** [GitHub release](https://github.com/quackscience/duckdb-quackscale/releases) and installs `quack` at build time.
+Two-node **Headscale + QuackTail** cluster on Linux — server and client DuckDB nodes on a shared tailnet, client `ATTACH`es the server's Quack endpoint.
+
+The image pulls the **latest** [GitHub release](https://github.com/quackscience/duckdb-quackscale/releases) and installs `quack` at build time.
 
 **Requires:** Linux, Docker Compose v2, `/dev/net/tun`, outbound HTTPS.
 
-**Services (exactly three):** `headscale`, `quacktail-server`, `quacktail-client` (test profile). There is **no** `bootstrap` or `wait-tailnet` sidecar — if you see those names, your compose file is stale (see below).
-
-## Run
-
-From the **repo root**, pull latest, then:
+## Quick start
 
 ```bash
 cd examples
 docker compose down --remove-orphans -v
-docker compose build --no-cache
+docker compose build
 docker compose up -d headscale quacktail-server
-```
-
-**Verify** — `docker compose ps` should show only `headscale` and `quacktail-server` (both running; server healthy once `/work/authkey` exists):
-
-```bash
-docker compose ps
-docker compose logs quacktail-server | tail -30   # expect: compose bootstrap ok
-```
-
-Run the client:
-
-```bash
 docker compose --profile test run --rm quacktail-client
 ```
 
-On first start, **quacktail-server** creates the Headscale authkey and SQL in `/work`, joins the tailnet, and serves Quack. The client waits for the server on the tailnet, then `quack_query` → `ATTACH quack:quacktail-server:9494`.
+Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profile only).
 
-Headscale’s control API is on the host at **`http://127.0.0.1:8080`**.
+## Expected output
 
-### Stale compose / bootstrap errors
+**Server** (`docker compose logs quacktail-server`):
 
-If you see errors like `bootstrap-1` or `wait-tailnet-1` and `/bin/sh: no such file or directory`:
-
-```bash
-git pull
-cd examples
-docker compose down --remove-orphans -v
-docker compose build --no-cache
-docker compose up -d headscale quacktail-server
+```
+✓ Headscale authkey ready — attach URI quack:quacktail-server:9494
+→ quacktail-server: join tailnet + quack_serve on quack:quacktail-server:9494
+  (libtailscale logs → /work/server.log)
 ```
 
-## Connect from local DuckDB (while compose is running)
+**Client** (`docker compose --profile test run --rm quacktail-client`):
 
-Use a **second DuckDB + quackscale** on your machine (outside Docker) as another tailnet node.
+```
+QuackTail cluster demo
+======================
+→ waiting for quacktail-server on tailnet ...
+✓ quacktail-server on tailnet
+→ join tailnet as quacktail-client ...
+→ ATTACH quack:quacktail-server:9494 + cross-node queries ...
 
-**1. Start the stack** (see above).
+┌─────────┬───────────────────────────────┬──────────────────┬─────────────────────┬────────────┐
+│ status  │          attach_uri           │    server_row    │     client_row      │ total_rows │
+│ varchar │            varchar            │     varchar      │       varchar       │   int32    │
+├─────────┼───────────────────────────────┼──────────────────┼─────────────────────┼────────────┤
+│ PASSED  │ quack:quacktail-server:9494   │ seed-from-server │ insert-from-client  │          2 │
+└─────────┴───────────────────────────────┴──────────────────┴─────────────────────┴────────────┘
 
-**2. Download the latest release DuckDB** (from the repo root):
+✓ Demo passed — two-node QuackTail cluster is working
+```
+
+That table confirms: tailnet join, `quack_query`, `ATTACH`, read from server, write from client.
+
+Verbose DuckDB/SQL logging is off by default (`QUACKTAIL_QUIET=1`). Set `QUACKTAIL_QUIET=0` in compose or `.env` to debug.
+
+Headscale control API: **`http://127.0.0.1:8080`**
+
+## Connect from local DuckDB
+
+With the stack running, join the same Headscale tailnet from a host DuckDB:
 
 ```bash
+# repo root
 eval "$(bash scripts/ci_download_release_duckdb.sh latest)"
 export QUACK_TAILNET_TOKEN=quackscale-demo-token
-```
 
-**3. Reuse the authkey** (created on server first boot):
-
-```bash
 cd examples
 AUTHKEY=$(docker compose exec -T quacktail-server cat /work/authkey)
-```
 
-**4. Join the tailnet and ATTACH the container server:**
-
-```bash
 STATE_DIR="${HOME}/.local/share/duckdb/quackscale-demo"
 mkdir -p "$STATE_DIR"
 
@@ -104,8 +101,9 @@ SQL
 | Variable | Default |
 |----------|---------|
 | `QUACK_TAILNET_TOKEN` | `quackscale-demo-token` |
+| `QUACKTAIL_QUIET` | `1` (clean demo output) |
 | `HEADSCALE_USER` | `quackscale-demo` |
-| `GITHUB_REPO` | `quackscience/duckdb-quackscale` (build-time only) |
+| `GITHUB_REPO` | `quackscience/duckdb-quackscale` (build-time) |
 
 ## Teardown
 
@@ -113,4 +111,8 @@ SQL
 docker compose --profile test down --remove-orphans -v
 ```
 
-Removes compose volumes (authkey, DuckDB files, Headscale DB). Local `state_dir` on the host is kept.
+## Troubleshooting
+
+**Stale `bootstrap` / `wait-tailnet` containers** — old compose file; run `git pull`, then `docker compose down --remove-orphans -v` and rebuild.
+
+**Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`

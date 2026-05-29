@@ -20,6 +20,52 @@ fi
 
 mkdir -p "$WORK"
 
+ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
+
+write_client_demo_sql() {
+  cat >"$WORK/client_demo.sql" <<SQL
+CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
+
+CREATE TEMP TABLE _probe AS
+SELECT q FROM quack_query(
+    '${ATTACH_URI}',
+    'SELECT 1 AS q',
+    token => '${QUACK_TOKEN}',
+    disable_ssl => true
+);
+
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${QUACK_TOKEN}',
+    SCOPE '${ATTACH_URI}'
+);
+
+ATTACH '${ATTACH_URI}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client');
+
+SELECT
+    'PASSED' AS status,
+    '${ATTACH_URI}' AS attach_uri,
+    (SELECT msg FROM remote.e2e_payload WHERE source = 'server') AS server_row,
+    (SELECT msg FROM remote.e2e_payload WHERE source = 'client') AS client_row,
+    (SELECT COUNT(*)::INTEGER FROM remote.e2e_payload) AS total_rows;
+SQL
+}
+
+if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" && ! -f "$WORK/client_demo.sql" ]]; then
+  write_client_demo_sql
+  echo "✓ added demo client SQL — attach URI ${ATTACH_URI}"
+  exit 0
+fi
+
+if [[ -f "$WORK/server_setup.sql" ]]; then
+  exit 0
+fi
+
 echo "Waiting for Headscale socket ${HS_SOCKET} ..."
 for _ in $(seq 1 60); do
   if [[ -S "$HS_SOCKET" ]]; then
@@ -163,11 +209,11 @@ CALL tailscale_up(
     state_dir => '/work/client-tailscale',
     ephemeral => true
 );
-
-SELECT 'client_tailscale_up|done';
 SQL
 
 ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
+
+write_client_demo_sql
 
 cat >"$WORK/client_attach.sql" <<SQL
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
@@ -207,4 +253,4 @@ SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
 SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
 SQL
 
-echo "compose bootstrap ok — ATTACH ${ATTACH_URI}"
+echo "✓ Headscale authkey ready — attach URI ${ATTACH_URI}"

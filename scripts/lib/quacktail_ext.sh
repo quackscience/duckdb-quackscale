@@ -84,11 +84,11 @@ quacktail_ci_ensure_quack() {
   set_ext="$(quacktail_ext_sql_set "$ext_dir")"
 
   if [[ "$mode" == "load_only" ]]; then
-    if ! "$duckdb_bin" :memory: -batch -c "${set_ext} LOAD quack; SELECT 1;"; then
+    if ! "$duckdb_bin" :memory: -batch -c "${set_ext} LOAD quack; SELECT 1;" >/dev/null; then
       echo "error: quack not available at ${ext_dir} (host must install before containers start)" >&2
       return 1
     fi
-  elif ! "$duckdb_bin" :memory: -batch -c "${set_ext} LOAD quack; SELECT 1;"; then
+  elif ! "$duckdb_bin" :memory: -batch -c "${set_ext} LOAD quack; SELECT 1;" >/dev/null; then
     echo "Installing quack (core, then core_nightly) into ${ext_dir} ..."
     if ! "$duckdb_bin" :memory: -batch -c "${set_ext} INSTALL quack FROM core; LOAD quack; SELECT 1;"; then
       "$duckdb_bin" :memory: -batch -c "${set_ext} INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
@@ -112,6 +112,10 @@ quacktail_ci_ensure_quack() {
     return 1
   fi
   quacktail_ext_verify_artifact "$install_path"
+
+  if [[ "${QUACKTAIL_QUIET:-}" == "1" ]]; then
+    return 0
+  fi
 
   echo "=== quack extension (${mode}) ==="
   "$duckdb_bin" :memory: -batch -echo -c \

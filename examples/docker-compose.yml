@@ -14,6 +14,7 @@ name: quacktail-demo
 x-env: &env
   QUACK_PORT: "9494"
   QUACK_TAILNET_TOKEN: ${QUACK_TAILNET_TOKEN:-quackscale-demo-token}
+  QUACKTAIL_QUIET: "1"
   HEADSCALE_CONTROL_URL: http://headscale:8080
   HEADSCALE_USER: ${HEADSCALE_USER:-quackscale-demo}
   SERVER_HOST: quacktail-server
