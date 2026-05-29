@@ -56,8 +56,14 @@ SELECT
 SQL
 }
 
-if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" && ! -f "$WORK/client_demo.sql" ]]; then
+write_client_run_sql() {
+  cat "$WORK/client_init.sql" "$WORK/client_demo.sql" >"$WORK/client_run.sql"
+}
+
+if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" && ! -f "$WORK/client_run.sql" ]]; then
+  [[ -f "$WORK/client_init.sql" ]] || { echo "error: missing $WORK/client_init.sql" >&2; exit 1; }
   write_client_demo_sql
+  write_client_run_sql
   echo "✓ added demo client SQL — attach URI ${ATTACH_URI}"
   exit 0
 fi
@@ -214,6 +220,8 @@ SQL
 ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
 
 write_client_demo_sql
+
+write_client_run_sql
 
 cat >"$WORK/client_attach.sql" <<SQL
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();

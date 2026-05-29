@@ -35,18 +35,17 @@ QuackTail cluster demo
 ======================
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-→ join tailnet as quacktail-client ...
-→ ATTACH quack:quacktail-server:9494 + cross-node queries ...
+→ join tailnet, ATTACH quack:quacktail-server:9494, verify cross-node queries ...
 
 ┌─────────┬───────────────────────────────┬──────────────────┬─────────────────────┬────────────┐
 │ status  │          attach_uri           │    server_row    │     client_row      │ total_rows │
-│ varchar │            varchar            │     varchar      │       varchar       │   int32    │
-├─────────┼───────────────────────────────┼──────────────────┼─────────────────────┼────────────┤
 │ PASSED  │ quack:quacktail-server:9494   │ seed-from-server │ insert-from-client  │          2 │
 └─────────┴───────────────────────────────┴──────────────────┴─────────────────────┴────────────┘
 
 ✓ Demo passed — two-node QuackTail cluster is working
 ```
+
+On failure, errors are printed from `/work/client.log` (not swallowed).
 
 That table confirms: tailnet join, `quack_query`, `ATTACH`, read from server, write from client.
 

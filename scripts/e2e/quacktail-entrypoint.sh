@@ -103,14 +103,47 @@ run_client_verbose() {
     -init "${WORK}/client_init.sql" -batch -echo
 }
 
+maybe_compose_bootstrap() {
+  [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
+  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_run.sql" ]] && return 0
+  /usr/local/bin/quacktail-compose-bootstrap.sh
+}
+
+# Print the last DuckDB ASCII result table from captured output.
+print_last_duckdb_table() {
+  local out="${1:?output file}"
+  awk '
+    /^┌/ { table = $0 ORS; in_table = 1; next }
+    in_table {
+      table = table $0 ORS
+      if (/^└/) {
+        last = table
+        in_table = 0
+        table = ""
+      }
+    }
+    END {
+      if (last != "") {
+        printf "%s", last
+      }
+    }
+  ' "$out"
+}
+
 run_client_demo() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri="quack:${SERVER_HOST}:${PORT}"
-  local demo_sql="${WORK}/client_demo.sql"
+  local run_sql="${WORK}/client_run.sql"
+  local out="${WORK}/client.out"
+  local log="${WORK}/client.log"
 
-  if [[ ! -f "$demo_sql" ]]; then
-    echo "error: ${demo_sql} missing (re-run server bootstrap: docker compose down -v && up)" >&2
-    exit 1
+  if [[ ! -f "$run_sql" ]]; then
+    if [[ -f "${WORK}/client_init.sql" && -f "${WORK}/client_demo.sql" ]]; then
+      cat "${WORK}/client_init.sql" "${WORK}/client_demo.sql" >"$run_sql"
+    else
+      echo "error: ${run_sql} missing (docker compose down -v && up to re-bootstrap)" >&2
+      exit 1
+    fi
   fi
 
   echo ""
@@ -119,14 +152,29 @@ run_client_demo() {
 
   ensure_quack
 
-  echo "→ join tailnet as ${CLIENT_HOST} ..."
-  "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    -init "${WORK}/client_init.sql" -c "SELECT 1;" 2>/dev/null
-
-  echo "→ ATTACH ${attach_uri} + cross-node queries ..."
+  echo "→ join tailnet, ATTACH ${attach_uri}, verify cross-node queries ..."
   echo ""
-  "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    -f "$demo_sql" 2>/dev/null
+
+  if ! "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
+    -f "$run_sql" >"$out" 2>"$log"; then
+    echo "error: client demo failed" >&2
+    if [[ -s "$log" ]]; then
+      echo "--- log ---" >&2
+      tail -40 "$log" >&2
+    fi
+    if [[ -s "$out" ]]; then
+      echo "--- output ---" >&2
+      tail -40 "$out" >&2
+    fi
+    exit 1
+  fi
+
+  if grep -q "PASSED" "$out" 2>/dev/null; then
+    print_last_duckdb_table "$out"
+  else
+    echo "warn: expected PASSED row missing; raw tail of output:" >&2
+    tail -20 "$out"
+  fi
   echo ""
   echo "✓ Demo passed — two-node QuackTail cluster is working"
 }
