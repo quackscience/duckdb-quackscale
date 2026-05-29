@@ -305,6 +305,31 @@ void TailscaleBridge::ClearServe() {
 #endif
 }
 
+void TailscaleBridge::PingTCP(const string &host, idx_t port, idx_t timeout_ms) {
+	std::lock_guard<std::mutex> guard(g_tailscale_mutex);
+#ifdef QUACKSCALE_WITH_TAILSCALE
+	if (!running) {
+		throw InvalidInputException("tailscale_ping: call tailscale_up() first");
+	}
+	if (host.empty()) {
+		throw InvalidInputException("tailscale_ping: host must not be empty");
+	}
+	if (port == 0 || port > 65535) {
+		throw InvalidInputException("tailscale_ping: port must be between 1 and 65535");
+	}
+	EnsureHandle();
+	auto timeout = timeout_ms == 0 ? 5000 : static_cast<int>(timeout_ms);
+	if (tailscale_ping_tcp(handle, host.c_str(), static_cast<int>(port), timeout) != 0) {
+		throw IOException("tailscale_ping failed: %s", LastErrorMessage());
+	}
+#else
+	(void)host;
+	(void)port;
+	(void)timeout_ms;
+	throw NotImplementedException("QuackScale was built without libtailscale.");
+#endif
+}
+
 string TailscaleBridge::PrimaryTailnetIP() const {
 	if (ips.empty()) {
 		throw InvalidInputException("Tailscale is not up or has no tailnet IPs yet. Call tailscale_up() first.");

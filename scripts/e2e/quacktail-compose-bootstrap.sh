@@ -61,6 +61,66 @@ CALL tailscale_up(
 SQL
 }
 
+write_client_session_sql() {
+  local authkey="${1:?authkey required}"
+  local attach_uri="${2:?attach uri required}"
+  local ping_sql=""
+  local ext_dir="/duckdb_extensions"
+  if command -v duckdb >/dev/null 2>&1 \
+    && duckdb :memory: -batch -csv -noheader -c \
+      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_ping';" \
+      2>/dev/null | grep -qx '1'; then
+    ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
+  fi
+  cat >"$WORK/client_session.sql" <<SQL
+LOAD quackscale;
+
+CALL tailscale_up(
+    hostname => '${CLIENT_HOST}',
+    control_url => '${CONTROL_URL}',
+    authkey => '${authkey}',
+    state_dir => '${CLIENT_STATE_DIR}',
+    ephemeral => true
+);
+
+${ping_sql}
+
+SET extension_directory='/duckdb_extensions';
+LOAD quack;
+
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${QUACK_TOKEN}',
+    SCOPE '${attach_uri}'
+);
+
+FROM quack_query(
+    '${attach_uri}',
+    'SELECT 1 AS probe',
+    token => '${QUACK_TOKEN}',
+    disable_ssl => true
+);
+
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
+ON CONFLICT DO NOTHING;
+
+SELECT
+    'PASSED' AS status,
+    '${attach_uri}' AS attach_uri,
+    MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
+    MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
+    COUNT(*)::INTEGER AS total_rows
+FROM remote.e2e_payload;
+SQL
+  write_client_init_sql "$authkey"
+  cp "$WORK/client_session.sql" "$WORK/client_demo.sql"
+}
+
 write_client_quack_sql() {
   local attach_uri="${1:?attach uri required}"
   cat >"$WORK/client_quack.sql" <<SQL
@@ -78,8 +138,6 @@ ATTACH '${attach_uri}' AS remote (
     DISABLE_SSL true
 );
 
--- One Quack remote op per statement: INSERT + scan in the same query is rejected by
--- duckdb-quack QuackOptimizer (see docs/QUACK_STREAMING.md).
 INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
 ON CONFLICT DO NOTHING;
 
@@ -91,7 +149,6 @@ SELECT
     COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
 SQL
-  cp "$WORK/client_quack.sql" "$WORK/client_demo.sql"
 }
 
 write_client_attach_sql() {
@@ -133,7 +190,7 @@ refresh_client_sql() {
   local attach_uri
   attach_uri="$(resolve_attach_uri)"
   ATTACH_URI="$attach_uri"
-  write_client_init_sql "$authkey"
+  write_client_session_sql "$authkey" "$attach_uri"
   write_client_quack_sql "$attach_uri"
   write_client_attach_sql "$attach_uri"
   write_client_queries_sql
@@ -151,13 +208,14 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     echo "✓ server quack SQL ready — loopback + tailscale_serve_local(:${QUACK_PORT})"
   fi
   if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
-    || [[ ! -f "$WORK/client_quack.sql" ]] \
+    || [[ ! -f "$WORK/client_session.sql" ]] \
     || [[ ! -f "$WORK/client_init.sql" ]] \
     || [[ -f "$WORK/client_demo.sql" && ! -f "$WORK/client_quack.sql" ]] \
     || { [[ -f "$WORK/client_quack.sql" ]] && grep -q 'NOT EXISTS' "$WORK/client_quack.sql"; } \
     || { [[ -f "$WORK/client_init.sql" ]] && ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql"; } \
     || { [[ -f "$WORK/client_quack.sql" ]] && grep -qE "quack:100\.64\." "$WORK/client_quack.sql"; } \
-    || { [[ -f "$WORK/client_quack.sql" ]] && grep -q 'quack_query' "$WORK/client_quack.sql"; }; then
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"
   fi

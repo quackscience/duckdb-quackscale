@@ -23,6 +23,11 @@ CALL tailscale_login_status();
 idle	NULL	NULL	false	NULL	[]
 
 statement error
+CALL tailscale_ping(host => '10.0.0.1');
+----
+tailscale_ping: call tailscale_up() first
+
+statement error
 SELECT quack_uri();
 ----
 Tailscale is not up

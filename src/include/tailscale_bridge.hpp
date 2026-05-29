@@ -60,6 +60,9 @@ public:
 	void ServeLocalhostTCP(idx_t listen_port, idx_t local_port);
 	void ClearServe();
 
+	//! Dial host:port over the tailnet via tsnet (peer connectivity check).
+	void PingTCP(const string &host, idx_t port, idx_t timeout_ms);
+
 	string PrimaryTailnetIP() const;
 	string FormatQuackURI(const string &host, idx_t port) const;
 	string QuackListenURI(idx_t port = QUACKSCALE_DEFAULT_QUACK_PORT) const;

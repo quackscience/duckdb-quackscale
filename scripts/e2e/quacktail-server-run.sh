@@ -2,18 +2,14 @@
 # Long-lived server: DuckDB init (tailscale + quack_serve) then touch /work/quack_ready.
 set -euo pipefail
 
-# shellcheck source=/dev/null
-source /usr/local/lib/quacktail_ext.sh
-
 DUCKDB="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
 WORK="${QUACKTAIL_WORK:-/work}"
 DB="${WORK}/server.duckdb"
 INIT_SQL="${WORK}/server_init.sql"
-PORT="${QUACK_PORT:-9494}"
-TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-demo-token}"
 READY="${WORK}/quack_ready"
 LOG="${WORK}/server.log"
 WAIT_SEC="${QUACKTAIL_SERVER_READY_SEC:-120}"
+INIT_SETTLE_SEC="${QUACKTAIL_SERVER_INIT_SETTLE_SEC:-8}"
 
 rm -f "$READY"
 : >"$LOG"
@@ -36,7 +32,7 @@ for ((i = 1; i <= WAIT_SEC; i++)); do
     wait "$duck_pid" || true
     exit 1
   fi
-  if quacktail_quack_endpoint_ready "127.0.0.1" "$PORT" "$TOKEN"; then
+  if (( i >= INIT_SETTLE_SEC )); then
     touch "$READY"
     break
   fi
@@ -44,7 +40,7 @@ for ((i = 1; i <= WAIT_SEC; i++)); do
 done
 
 if [[ ! -f "$READY" ]]; then
-  echo "error: Quack not listening on 127.0.0.1:${PORT} after ${WAIT_SEC}s (see ${LOG})" >&2
+  echo "error: server DuckDB did not stay up for ${INIT_SETTLE_SEC}s (see ${LOG})" >&2
   tail -40 "$LOG" >&2 || true
   exit 1
 fi

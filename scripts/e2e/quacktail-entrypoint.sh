@@ -32,10 +32,10 @@ quacktail_sql_extension_directory() {
 
 maybe_compose_bootstrap() {
   [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
-  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_quack.sql" && -f "${WORK}/client_init.sql" ]] \
+  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_session.sql" && -f "${WORK}/authkey" ]] \
     || /usr/local/bin/quacktail-compose-bootstrap.sh
-  if [[ -f "${WORK}/client_quack.sql" ]] \
-    && grep -q 'NOT EXISTS' "${WORK}/client_quack.sql" 2>/dev/null; then
+  if [[ -f "${WORK}/client_session.sql" ]] \
+    && ! grep -q 'tailscale_ping' "${WORK}/client_session.sql" 2>/dev/null; then
     /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
 }
@@ -76,7 +76,6 @@ wait_for_tailnet_server() {
   return 1
 }
 
-# Cross-node Quack readiness (caller must already be on the tailnet).
 resolve_server_tailnet_ip() {
   headscale_cmd nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true
 }
@@ -89,9 +88,9 @@ ensure_server_hosts_mapping() {
     return 0
   fi
   if [[ "$QUIET" == "1" ]]; then
-    echo "→ ${SERVER_HOST} → ${ip} (/etc/hosts, tailscale_serve_local on :${QUACK_PORT:-9494})"
+    echo "→ ${SERVER_HOST} → ${ip} (/etc/hosts for tailscale_ping + ATTACH hostname)"
   else
-    echo "Mapping ${SERVER_HOST} -> ${ip} in /etc/hosts (tailscale_serve_local)"
+    echo "Mapping ${SERVER_HOST} -> ${ip} in /etc/hosts"
   fi
   if grep -qE "[[:space:]]${SERVER_HOST}$" /etc/hosts 2>/dev/null; then
     grep -vE "[[:space:]]${SERVER_HOST}$" /etc/hosts > /etc/hosts.quacktail || true
@@ -132,12 +131,8 @@ ensure_client_sql() {
   if [[ -f "${WORK}/authkey" ]] && [[ -x /usr/local/bin/quacktail-compose-bootstrap.sh ]]; then
     COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
-  if [[ ! -f "${WORK}/client_init.sql" ]]; then
-    echo "error: ${WORK}/client_init.sql missing" >&2
-    exit 1
-  fi
-  if [[ ! -f "${WORK}/client_quack.sql" ]] && [[ ! -f "${WORK}/client_attach.sql" ]]; then
-    echo "error: need ${WORK}/client_quack.sql or ${WORK}/client_attach.sql" >&2
+  if [[ ! -f "${WORK}/client_session.sql" ]]; then
+    echo "error: ${WORK}/client_session.sql missing" >&2
     exit 1
   fi
 }
@@ -151,20 +146,8 @@ client_attach_uri() {
     cat "${WORK}/attach_uri"
     return
   fi
-  if [[ -f "${WORK}/client_quack.sql" ]]; then
-    grep -E "^ATTACH '" "${WORK}/client_quack.sql" | head -1 | sed -E "s/^ATTACH '([^']+)'.*/\1/"
-  fi
-}
-
-write_client_session_sql() {
-  local dest="${1:?dest path}"
-  if [[ -f "${WORK}/client_quack.sql" ]]; then
-    cat "${WORK}/client_quack.sql" >"$dest"
-  else
-    {
-      cat "${WORK}/client_attach.sql"
-      [[ -f "${WORK}/client_queries.sql" ]] && cat "${WORK}/client_queries.sql"
-    } >"$dest"
+  if [[ -f "${WORK}/client_session.sql" ]]; then
+    grep -E "^ATTACH '" "${WORK}/client_session.sql" | head -1 | sed -E "s/^ATTACH '([^']+)'.*/\1/"
   fi
 }
 
@@ -183,11 +166,10 @@ quacktail_dump_client_failure() {
 
 run_duckdb_client_session() {
   local client_db="${1:?db}"
-  local quack_sql="${2:?quack sql file}"
-  local init_sql="${3:?init sql file}"
-  local out="${4:?out file}"
-  local demo_timeout="${5:?timeout}"
-  shift 5
+  local session_sql="${2:?session sql file}"
+  local out="${3:?out file}"
+  local demo_timeout="${4:?timeout}"
+  shift 4
   local -a duckdb_extra=("$@")
   local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
@@ -195,26 +177,22 @@ run_duckdb_client_session() {
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
 
-  # Proven flow: tailscale_up via -init (tsnet stays up); Quack ATTACH/DML on stdin — same DuckDB session.
+  # One DuckDB session: tailscale_up → tailscale_ping → quack_query → ATTACH (no curl gates).
   set +o pipefail
   if [[ "$QUIET" == "1" ]]; then
-    timeout "$demo_timeout" bash -c '
-      cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "$4" -init "$5" "${@:6}"
-    ' _ "$quack_sql" "$DUCKDB" "$ext_cmd" "$client_db" "$init_sql" \
-      "${duckdb_extra[@]}" \
+    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -bail -batch \
+      -cmd "$ext_cmd" "${duckdb_extra[@]}" "$client_db" -init "$session_sql" \
       2>>"$tsnet_log" | quacktail_filter_demo_stream | tee "$out"
   else
-    timeout "$demo_timeout" bash -c '
-      cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "$4" -init "$5" "${@:6}"
-    ' _ "$quack_sql" "$DUCKDB" "$ext_cmd" "$client_db" "$init_sql" \
-      "${duckdb_extra[@]}" \
+    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -bail -batch \
+      -cmd "$ext_cmd" "${duckdb_extra[@]}" "$client_db" -init "$session_sql" \
       2>&1 | quacktail_filter_demo_stream | tee "$out"
   fi
-  duckdb_rc=${PIPESTATUS[0]}
+  duckdb_rc=$?
   set -o pipefail
 
   if [[ "$duckdb_rc" -eq 124 ]]; then
-    echo "error: client demo timed out after ${demo_timeout}s (tailnet join OK — check peer route to server Quack)" >&2
+    echo "error: client demo timed out after ${demo_timeout}s" >&2
     quacktail_dump_client_failure
     return 124
   fi
@@ -223,14 +201,15 @@ run_duckdb_client_session() {
 
 run_client() {
   local client_db="${WORK}/client.duckdb"
-  local attach_uri
-  local init_sql="${WORK}/client_init.sql"
-  local quack_sql="${WORK}/client_quack.sql"
-  local session_quack_sql="${WORK}/client_session_quack.sql"
+  local session_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
-  local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-45}"
+  local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-90}"
+  local max_attempts="${QUACKTAIL_CLIENT_ATTEMPTS:-15}"
+  local poll_sec="${QUACKTAIL_CLIENT_POLL_SEC:-2}"
+  local attach_uri
   local duckdb_rc=0
   local -a duckdb_extra=()
+  local attempt
 
   wait_for_tailnet_server
   ensure_quack
@@ -242,30 +221,32 @@ run_client() {
     exit 1
   fi
 
-  if [[ -f "$quack_sql" ]]; then
-    :
-  else
-    quack_sql="$session_quack_sql"
-    write_client_session_sql "$quack_sql"
-  fi
-
   if [[ "$QUIET" == "1" ]]; then
     echo ""
     echo "QuackTail cluster demo"
     echo "======================"
-    echo "→ join tailnet as ${CLIENT_HOST}, ATTACH ${attach_uri}, verify read/write ..."
+    echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
     echo ""
   else
-    echo "=== client init SQL (-init) ==="
-    cat "$init_sql"
-    echo "=== client quack SQL (stdin) ==="
-    cat "$quack_sql"
+    echo "=== client session SQL (-init) ==="
+    cat "$session_sql"
     duckdb_extra=(-echo)
   fi
 
-  duckdb_rc=0
-  run_duckdb_client_session "$client_db" "$quack_sql" "$init_sql" "$out" "$demo_timeout" \
-    "${duckdb_extra[@]}" || duckdb_rc=$?
+  rm -f "$client_db"
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    duckdb_rc=0
+    run_duckdb_client_session "$client_db" "$session_sql" "$out" "$demo_timeout" \
+      "${duckdb_extra[@]}" || duckdb_rc=$?
+    if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
+      break
+    fi
+    if (( attempt < max_attempts )); then
+      [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} (tailscale_ping / quack_query / ATTACH) ..."
+      rm -f "$client_db"
+      sleep "$poll_sec"
+    fi
+  done
 
   if [[ "$duckdb_rc" -ne 0 ]]; then
     echo "error: client demo failed (exit ${duckdb_rc})" >&2
@@ -274,7 +255,8 @@ run_client() {
   fi
 
   if ! grep -q "PASSED" "$out" 2>/dev/null; then
-    echo "error: expected PASSED row missing" >&2
+    echo "error: expected PASSED row missing after ${max_attempts} attempts" >&2
+    quacktail_dump_client_failure
     exit 1
   fi
 

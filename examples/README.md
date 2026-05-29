@@ -139,11 +139,13 @@ docker compose --profile test down --remove-orphans -v
 
 **Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`
 
-**Client times out after `CREATE SECRET Success`** — tailscale join succeeded; the stall is cross-node Quack HTTP, not Headscale. Recreate the server after script changes:
+**Client times out after `CREATE SECRET Success`** — tailnet join succeeded; stall is on `tailscale_ping`, `quack_query`, or `ATTACH`. Recreate the server after script changes:
 
 ```bash
 docker compose up -d --force-recreate quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```
+
+Readiness uses **only DuckDB** (`tailscale_ping`, `quack_query`) — no curl gates. Client retries the full session until `PASSED`.
 
 **`Multiple streaming scans or streaming scans + CTAS / insert`** — this is a **`quack` extension** planner limit, not QuackScale. It fires when one SQL statement both reads and writes the same attached Quack catalog (e.g. `INSERT … WHERE NOT EXISTS (SELECT … FROM remote.t)`). See [docs/QUACK_STREAMING.md](../docs/QUACK_STREAMING.md).

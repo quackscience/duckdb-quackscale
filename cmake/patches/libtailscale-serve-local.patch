@@ -2,16 +2,17 @@ diff --git a/tailscale.c b/tailscale.c
 index be18085..c78399c 100644
 --- a/tailscale.c
 +++ b/tailscale.c
-@@ -25,6 +25,8 @@ extern int TsnetListen(int sd, char* net, char* addr, int* listenerOut);
+@@ -25,6 +25,9 @@ extern int TsnetListen(int sd, char* net, char* addr, int* listenerOut);
  extern int TsnetAccept(int ld, int* connOut);
  extern int TsnetLoopback(int sd, char* addrOut, size_t addrLen, char* proxyOut, char* localOut);
  extern int TsnetEnableFunnelToLocalhostPlaintextHttp1(int sd, int localhostPort);
 +extern int TsnetServeLocalhostTCP(int sd, int listenPort, int localPort);
 +extern int TsnetClearServe(int sd);
++extern int TsnetPingTCP(int sd, char* host, int port, int timeoutMs);
  
  tailscale tailscale_new() {
  	return TsnetNewServer();
-@@ -92,3 +94,11 @@ int tailscale_errmsg(tailscale sd, char* buf, size_t buflen) {
+@@ -92,3 +95,15 @@ int tailscale_errmsg(tailscale sd, char* buf, size_t buflen) {
  int tailscale_enable_funnel_to_localhost_plaintext_http1(tailscale sd, int localhostPort) {
  	return TsnetEnableFunnelToLocalhostPlaintextHttp1(sd, localhostPort);
  }
@@ -23,11 +24,23 @@ index be18085..c78399c 100644
 +int tailscale_clear_serve(tailscale sd) {
 +	return TsnetClearServe(sd);
 +}
++
++int tailscale_ping_tcp(tailscale sd, const char* host, int port, int timeout_ms) {
++	return TsnetPingTCP(sd, (char*)host, port, timeout_ms);
++}
 diff --git a/tailscale.go b/tailscale.go
 index 2238212..4a114e2 100644
 --- a/tailscale.go
 +++ b/tailscale.go
-@@ -621,3 +621,44 @@ func TsnetEnableFunnelToLocalhostPlaintextHttp1(sd C.int, localhostPort C.int) C
+@@ -18,6 +18,7 @@ import (
+ 	"strings"
+ 	"sync"
+ 	"syscall"
++	"time"
+ 	"unsafe"
+ 
+ 	"golang.org/x/sys/unix"
+@@ -621,3 +622,44 @@ func TsnetEnableFunnelToLocalhostPlaintextHttp1(sd C.int, localhostPort C.int) C
  
  	return 0
  }
@@ -72,11 +85,34 @@ index 2238212..4a114e2 100644
 +	}
 +	return s.recErr(lc.SetServeConfig(ctx, &ipn.ServeConfig{}))
 +}
++
++//export TsnetPingTCP
++func TsnetPingTCP(sd C.int, host *C.char, port C.int, timeoutMs C.int) C.int {
++	s := getServer(sd)
++	if s == nil {
++		return C.EBADF
++	}
++	if port <= 0 || port > 65535 {
++		return s.recErr(fmt.Errorf("libtailscale: invalid port"))
++	}
++	if timeoutMs <= 0 {
++		timeoutMs = 5000
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
++	defer cancel()
++	addr := net.JoinHostPort(C.GoString(host), strconv.Itoa(int(port)))
++	conn, err := s.s.Dial(ctx, "tcp", addr)
++	if err != nil {
++		return s.recErr(err)
++	}
++	conn.Close()
++	return 0
++}
 diff --git a/tailscale.h b/tailscale.h
 index 4531f06..d147122 100644
 --- a/tailscale.h
 +++ b/tailscale.h
-@@ -191,6 +191,15 @@ extern int tailscale_loopback(tailscale sd, char* addr_out, size_t addrlen, char
+@@ -191,6 +191,18 @@ extern int tailscale_loopback(tailscale sd, char* addr_out, size_t addrlen, char
  // 	-1    - other error, details printed to the tsnet logger
  extern int tailscale_enable_funnel_to_localhost_plaintext_http1(tailscale sd, int localhostPort);
  
@@ -88,6 +124,9 @@ index 4531f06..d147122 100644
 +
 +// tailscale_clear_serve removes Tailscale Serve port forwards for this node.
 +extern int tailscale_clear_serve(tailscale sd);
++
++// tailscale_ping_tcp dials host:port over the tailnet (tsnet). Use after tailscale_up().
++extern int tailscale_ping_tcp(tailscale sd, const char* host, int port, int timeout_ms);
 +
  // tailscale_errmsg writes the details of the last error to buf.
  // 

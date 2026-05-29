@@ -180,6 +180,7 @@ Load with `LOAD quackscale;`. Use **`CALL`** for table functions (same style as 
 |----------|-------------|
 | `quack_uri()` | Client-facing `quack:<host>:9494` for discovery/ATTACH |
 | `CALL tailscale_serve_local(port => 9494)` | Tailscale Serve: tailnet TCP → `127.0.0.1:9494` (run after local `quack_serve`) |
+| `CALL tailscale_ping(host => 'peer', port => 9494)` | tsnet TCP dial to peer (readiness check before Quack ATTACH) |
 | `quack_token()` | Shared Quack token from `QUACK_TAILNET_TOKEN` / `QUACK_TOKEN` env |
 | `CALL quack_discover()` | All `quack:` URIs this node advertises (`magicdns` / `tailnet_ip`) |
 

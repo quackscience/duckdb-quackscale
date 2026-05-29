@@ -101,6 +101,10 @@ SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT"
 echo "Client will ATTACH: ${SERVER_QUACK_URI}"
 printf '%s' "$SERVER_QUACK_URI" >"$WORK/attach_uri"
 
+headscale_ci_sql_client_session "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY" \
+  "$SERVER_HOST" "$QUACK_PORT" "$SERVER_QUACK_URI" "$QUACK_TOKEN" \
+  >"$WORK/client_session.sql"
+
 headscale_ci_sql_quack_client_demo "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_URI" \
   >"$WORK/client_quack.sql"
 

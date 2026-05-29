@@ -101,92 +101,38 @@ quacktail_ci_start_server() {
     "$QUACKTAIL_IMAGE"
 }
 
-# Local readiness: container alive, Quack bound on loopback. Not cross-node proof.
+# Local readiness: server container alive and /work/quack_ready present (no curl).
 quacktail_ci_wait_server_local() {
-  local port="${1:-9494}"
   local attempt=0
-  echo "Waiting for Quack loopback bind (port ${port}) ..."
-  while (( attempt < 30 )); do
+  echo "Waiting for server quack_ready marker ..."
+  while (( attempt < 120 )); do
     attempt=$((attempt + 1))
     if ! quacktail_ci_server_running; then
       echo "error: server container exited early" >&2
       quacktail_ci_logs
       return 1
     fi
-    if docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | grep -q "Failed to bind DuckDB Quack RPC server"; then
-      echo "error: quack_serve failed to bind inside container" >&2
+    if docker exec "$QUACKTAIL_SERVER_CONTAINER" test -f /work/quack_ready 2>/dev/null; then
+      echo "Server quack_ready (attempt ${attempt})"
+      return 0
+    fi
+    if docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | grep -qE 'IOException|Invalid Input|Failed to bind'; then
+      echo "error: server init failed (see container logs)" >&2
       quacktail_ci_logs
       return 1
     fi
-    if docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | grep -q "listen_url"; then
-      if quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "127.0.0.1"; then
-        echo "Quack listening on loopback (attempt ${attempt})"
-        return 0
-      fi
-    fi
-    if (( attempt % 5 == 0 )); then
+    if (( attempt % 10 == 0 )); then
       echo "  attempt ${attempt} ..."
-      docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | tail -8 || true
     fi
     sleep 1
   done
-  echo "error: Quack server did not bind on loopback" >&2
+  echo "error: server quack_ready not set" >&2
   quacktail_ci_logs
   return 1
 }
 
-# Poll from inside the server container until its own tailnet IP:port accepts Quack POST.
-quacktail_ci_wait_server_published() {
-  local port="${1:-9494}"
-  local server_ip="${2:?server tailnet IP required}"
-  local token="${3:-${QUACK_TAILNET_TOKEN:-}}"
-  local attempts="${4:-${E2E_SERVER_PUBLISH_ATTEMPTS:-60}}"
-  local poll_sec="${5:-${E2E_SERVER_PUBLISH_POLL_SEC:-2}}"
-  local i
-
-  echo "Polling server Quack POST on tailnet ${server_ip}:${port} (up to ${attempts} attempts) ..."
-  for (( i = 1; i <= attempts; i++ )); do
-    if quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "$server_ip" "$token"; then
-      echo "ok: server published Quack endpoint at ${server_ip}:${port} (attempt ${i})"
-      return 0
-    fi
-    echo "  publish attempt ${i}/${attempts} ..."
-    sleep "$poll_sec"
-  done
-  echo "error: server Quack endpoint not reachable at ${server_ip}:${port}" >&2
-  quacktail_ci_logs
-  return 1
-}
-
-# Back-compat alias: local bind only (cross-node gate runs in client).
 quacktail_ci_wait_server() {
-  local port="${1:-9494}"
-  local server_ip="${2:-}"
-  quacktail_ci_wait_server_local "$port"
-  if [[ -n "$server_ip" ]]; then
-    echo "  (server tailnet IP ${server_ip} — cross-node proof is client-side only)"
-  fi
-}
-
-quacktail_ci_container_http_open() {
-  local container="${1:?container}"
-  local port="${2:?port}"
-  local host="${3:-127.0.0.1}"
-  local token="${4:-}"
-  local code
-  if [[ -n "$token" ]]; then
-    code="$(docker exec "$container" curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
-      -H "Authorization: Bearer ${token}" \
-      -H 'Content-Type: application/json' \
-      -d '{}' \
-      "http://${host}:${port}/quack" 2>/dev/null || echo 000)"
-  else
-    code="$(docker exec "$container" curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
-      -H 'Content-Type: application/json' \
-      -d '{}' \
-      "http://${host}:${port}/quack" 2>/dev/null || echo 000)"
-  fi
-  [[ "$code" != "000" ]]
+  quacktail_ci_wait_server_local "${1:-9494}"
 }
 
 quacktail_ci_start_client() {
@@ -226,8 +172,8 @@ quacktail_ci_start_client() {
     -e "E2E_SERVER_IP=${server_ip}" \
     -e "E2E_SERVER_HOST=${server_host}" \
     -e "QUACKTAIL_ATTACH_URI=${QUACKTAIL_ATTACH_URI:-quack:${server_ip}:${port}}" \
-    -e "E2E_CROSS_NODE_GATE_ATTEMPTS=${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}" \
-    -e "E2E_CROSS_NODE_POLL_SEC=${E2E_CROSS_NODE_POLL_SEC:-2}" \
+    -e "QUACKTAIL_CLIENT_ATTEMPTS=${QUACKTAIL_CLIENT_ATTEMPTS:-15}" \
+    -e "QUACKTAIL_CLIENT_POLL_SEC=${QUACKTAIL_CLIENT_POLL_SEC:-2}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     -e "QUACK_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     "$QUACKTAIL_IMAGE"

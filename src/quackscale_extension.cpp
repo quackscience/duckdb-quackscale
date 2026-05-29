@@ -321,6 +321,63 @@ static void LoadInternal(ExtensionLoader &loader) {
 	serve_local_function.named_parameters["local_port"] = LogicalType::BIGINT;
 	loader.RegisterFunction(serve_local_function);
 
+	struct QuackscalePingBindData : public TableFunctionData {
+		string host;
+		idx_t port = QUACKSCALE_DEFAULT_QUACK_PORT;
+		idx_t timeout_ms = 5000;
+		bool finished = false;
+	};
+
+	static unique_ptr<FunctionData> QuackscalePingBind(ClientContext &context, TableFunctionBindInput &input,
+	                                                     vector<LogicalType> &return_types, vector<string> &names) {
+		auto bind = make_uniq<QuackscalePingBindData>();
+		auto host_it = input.named_parameters.find("host");
+		if (host_it == input.named_parameters.end() || host_it->second.IsNull()) {
+			throw InvalidInputException("tailscale_ping requires named parameter host");
+		}
+		bind->host = host_it->second.GetValue<string>();
+		auto port_it = input.named_parameters.find("port");
+		if (port_it != input.named_parameters.end()) {
+			auto port = port_it->second.GetValue<int64_t>();
+			if (port <= 0 || port > 65535) {
+				throw InvalidInputException("tailscale_ping port must be between 1 and 65535");
+			}
+			bind->port = NumericCast<idx_t>(port);
+		}
+		auto timeout_it = input.named_parameters.find("timeout_ms");
+		if (timeout_it != input.named_parameters.end()) {
+			auto timeout = timeout_it->second.GetValue<int64_t>();
+			if (timeout <= 0) {
+				throw InvalidInputException("tailscale_ping timeout_ms must be positive");
+			}
+			bind->timeout_ms = NumericCast<idx_t>(timeout);
+		}
+
+		return_types = {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::BOOLEAN};
+		names = {"host", "port", "reachable"};
+		return std::move(bind);
+	}
+
+	static void QuackscalePingFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+		auto &bind = data_p.bind_data->CastNoConst<QuackscalePingBindData>();
+		if (bind.finished) {
+			return;
+		}
+
+		TailscaleBridge::Get().PingTCP(bind.host, bind.port, bind.timeout_ms);
+		output.SetCardinality(1);
+		output.SetValue(0, 0, Value(bind.host));
+		output.SetValue(1, 0, Value::INTEGER(NumericCast<int32_t>(bind.port)));
+		output.SetValue(2, 0, Value::BOOLEAN(true));
+		bind.finished = true;
+	}
+
+	TableFunction ping_function("tailscale_ping", {}, QuackscalePingFunction, QuackscalePingBind);
+	ping_function.named_parameters["host"] = LogicalType::VARCHAR;
+	ping_function.named_parameters["port"] = LogicalType::BIGINT;
+	ping_function.named_parameters["timeout_ms"] = LogicalType::BIGINT;
+	loader.RegisterFunction(ping_function);
+
 	loader.RegisterFunction(ScalarFunction("quack_uri", {}, LogicalType::VARCHAR, QuackscaleQuackUriFunction));
 	loader.RegisterFunction(ScalarFunction("quack_token", {}, LogicalType::VARCHAR, QuackTokenFunction));
 }
