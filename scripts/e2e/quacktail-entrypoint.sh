@@ -145,25 +145,48 @@ client_attach_uri() {
 
 write_client_session_sql() {
   local dest="${1:?dest path}"
-  {
-    cat "${WORK}/client_init.sql"
-    if [[ -f "${WORK}/client_quack.sql" ]]; then
-      cat "${WORK}/client_quack.sql"
-    else
+  if [[ -f "${WORK}/client_quack.sql" ]]; then
+    cat "${WORK}/client_quack.sql" >"$dest"
+  else
+    {
       cat "${WORK}/client_attach.sql"
       [[ -f "${WORK}/client_queries.sql" ]] && cat "${WORK}/client_queries.sql"
-    fi
-  } >"$dest"
+    } >"$dest"
+  fi
+}
+
+run_duckdb_client_session() {
+  local client_db="${1:?db}"
+  local quack_sql="${2:?quack sql}"
+  local init_sql="${3:?init sql}"
+  local out="${4:?out file}"
+  local demo_timeout="${5:?timeout}"
+  shift 5
+  local -a duckdb_extra=("$@")
+  local duckdb_rc=0
+
+  # tailscale_up via -init (keeps tsnet alive); quack ATTACH/DML on stdin — same session, proven in CI.
+  set +o pipefail
+  timeout "$demo_timeout" bash -c '
+    cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "$4" -init "$5" "${@:6}"
+  ' _ "$quack_sql" "$DUCKDB" "$(quacktail_sql_extension_directory)" "$client_db" "$init_sql" \
+    "${duckdb_extra[@]}" \
+    2>&1 | quacktail_filter_demo_stream | tee "$out"
+  duckdb_rc=${PIPESTATUS[0]}
+  set -o pipefail
+  return "$duckdb_rc"
 }
 
 run_client() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri
-  local combined_sql="${WORK}/client_session.sql"
+  local quack_sql="${WORK}/client_quack.sql"
+  local init_sql="${WORK}/client_init.sql"
   local out="${WORK}/client.out"
   local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-300}"
   local duckdb_rc=0
   local -a duckdb_extra=()
+  local session_quack_sql=""
 
   wait_for_tailnet_server
   ensure_client_sql
@@ -171,6 +194,13 @@ run_client() {
   if [[ -z "$attach_uri" ]]; then
     echo "error: could not determine Quack ATTACH URI" >&2
     exit 1
+  fi
+
+  if [[ -f "$quack_sql" ]]; then
+    session_quack_sql="$quack_sql"
+  else
+    session_quack_sql="${WORK}/client_session_quack.sql"
+    write_client_session_sql "$session_quack_sql"
   fi
 
   if [[ "$QUIET" == "1" ]]; then
@@ -184,22 +214,19 @@ run_client() {
 
   if [[ "$QUIET" == "1" ]]; then
     echo "→ join tailnet as ${CLIENT_HOST}, ATTACH ${attach_uri}, verify read/write ..."
+    echo "  (tailscale join runs first; libtailscale logs hidden in quiet mode)"
     echo ""
   else
-    echo "=== client session SQL ==="
+    echo "=== client init SQL (-init) ==="
+    cat "$init_sql"
+    echo "=== client quack SQL (stdin) ==="
     write_client_session_sql /dev/stdout
     duckdb_extra=(-echo)
   fi
 
-  write_client_session_sql "$combined_sql"
-
-  set +o pipefail
-  timeout "$demo_timeout" bash -c '
-    cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "${@:4}"
-  ' _ "$combined_sql" "$DUCKDB" "$(quacktail_sql_extension_directory)" "${duckdb_extra[@]}" "$client_db" \
-    2>&1 | quacktail_filter_demo_stream | tee "$out"
-  duckdb_rc=${PIPESTATUS[0]}
-  set -o pipefail
+  duckdb_rc=0
+  run_duckdb_client_session "$client_db" "$session_quack_sql" "$init_sql" "$out" "$demo_timeout" \
+    "${duckdb_extra[@]}" || duckdb_rc=$?
 
   if [[ "$duckdb_rc" -ne 0 ]]; then
     echo "error: client demo failed (exit ${duckdb_rc})" >&2
