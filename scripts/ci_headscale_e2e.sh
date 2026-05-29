@@ -65,7 +65,7 @@ fi
 export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 
 CONTAINER_SERVER_STATE="/work/server-tailscale"
-CONTAINER_CLIENT_STATE="/work/client-tailscale"
+CONTAINER_CLIENT_STATE="/tmp/client-tailscale"
 
 {
   headscale_ci_sql_tailscale_up "$SERVER_HOST" "$CONTAINER_SERVER_STATE" "$AUTHKEY"
@@ -87,53 +87,30 @@ SQL
   headscale_ci_sql_quack_serve "$QUACK_PORT"
 } >"$WORK/server_quack.sql"
 
-{
-  headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
-  cat <<SQL
+headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY" \
+  >"$WORK/client_init.sql"
 
-LOAD quack;
-
-SQL
-  headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY"
-  cat <<SQL
-
-SELECT 'client_tailscale_up|done';
-SQL
-} >"$WORK/client_init.sql"
-
-# --- Start server (long-lived) then client immediately — both on tailnet together ---
 echo "=== Starting server container ($SERVER_HOST) ==="
 quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
 
-echo "=== Resolving server tailnet IP (Headscale node list; server container already running) ==="
+echo "=== Resolving server tailnet IP ==="
 SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 60)"
 echo "Server tailnet IP: ${SERVER_IP}"
 
 SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
-SERVER_QUACK_SCOPE="$SERVER_QUACK_URI"
 echo "Client will ATTACH: ${SERVER_QUACK_URI}"
+printf '%s' "$SERVER_QUACK_URI" >"$WORK/attach_uri"
 
-{
-  headscale_ci_sql_quack_client_attach "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_SCOPE"
-} >"$WORK/client_attach.sql"
-
-{
-  cat <<SQL
-INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
-ON CONFLICT DO NOTHING;
-
-SELECT 'row_count|' || COUNT(*)::VARCHAR FROM remote.e2e_payload;
-SELECT 'client_msg|' || msg FROM remote.e2e_payload WHERE source = 'client';
-SELECT 'server_msg|' || msg FROM remote.e2e_payload WHERE source = 'server';
-SQL
-} >"$WORK/client_queries.sql"
+headscale_ci_sql_quack_client_demo "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_URI" \
+  >"$WORK/client_quack.sql"
 
 export E2E_SERVER_IP="$SERVER_IP"
+export QUACKTAIL_ATTACH_URI="$SERVER_QUACK_URI"
 
-echo "=== Starting client container ($CLIENT_HOST) while server is still running ==="
+echo "=== Starting client container ($CLIENT_HOST) ==="
 quacktail_ci_start_client "$DUCKDB" "$WORK" "$QUACK_PORT"
 
-echo "=== Waiting for client (server + client both running; timeout ${CLIENT_TIMEOUT}s) ==="
+echo "=== Waiting for client (timeout ${CLIENT_TIMEOUT}s) ==="
 set +e
 quacktail_ci_wait_client "$CLIENT_TIMEOUT"
 CLIENT_RC=$?
@@ -143,7 +120,7 @@ docker logs "$QUACKTAIL_CLIENT_CONTAINER" >"$CLIENT_LOG" 2>&1 || true
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
 
 if (( CLIENT_RC == 124 )); then
-  echo "error: client timed out after ${CLIENT_TIMEOUT}s (server still running)" >&2
+  echo "error: client timed out after ${CLIENT_TIMEOUT}s" >&2
   exit 1
 fi
 
@@ -165,28 +142,23 @@ if echo "$CLIENT_OUT" | grep -qE 'Failed to send message|Timeout was reached|IO 
   exit 1
 fi
 
-echo "$CLIENT_OUT" | grep -q 'quack_query_probe|1' || {
-  echo "error: quack_query probe failed (server not reachable via Quack protocol)" >&2
+echo "$CLIENT_OUT" | grep -q 'PASSED' || {
+  echo "error: PASSED row missing from client output" >&2
   echo "$CLIENT_OUT" >&2
   exit 1
 }
-echo "ok: quack_query probe"
-
-echo "$CLIENT_OUT" | grep -q 'after_attach|ok' || {
-  echo "error: ATTACH did not complete" >&2
-  echo "$CLIENT_OUT" >&2
-  exit 1
-}
-echo "ok: ATTACH completed"
+echo "ok: PASSED summary"
 
 echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
   echo "error: client INSERT not found" >&2
   exit 1
 }
+echo "ok: client row"
 
 echo "$CLIENT_OUT" | grep -q 'seed-from-server' || {
   echo "error: server seed not found" >&2
   exit 1
 }
+echo "ok: server row"
 
 echo "Headscale QuackTail e2e passed (server + client ran concurrently)."

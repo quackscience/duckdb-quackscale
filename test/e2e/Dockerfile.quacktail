@@ -2,7 +2,7 @@
 FROM ubuntu:24.04
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tini \
+    && apt-get install -y --no-install-recommends ca-certificates curl coreutils tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/e2e/quacktail-entrypoint.sh /usr/local/bin/quacktail-entrypoint.sh

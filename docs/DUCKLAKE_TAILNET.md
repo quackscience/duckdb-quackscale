@@ -19,7 +19,7 @@ Goal: serve DuckLake (or SQLite / Postgres-backed catalogs) on a node via **Quac
 
 ## Constraints (today)
 
-- **Quack streaming-scan limit** — one remote read or write per SQL statement on an attached catalog; see [QUACK_STREAMING.md](QUACK_STREAMING.md).
+- **Quack streaming-scan limit** — one remote read or write per SQL statement on an attached catalog; see [QUACK_STREAMING.md](QUACK_STREAMING.md). DuckLake workloads often use separate statements or server-side execution, so parallelism is less blocked than multi-scan single statements on ATTACH.
 - **Nested catalogs** — Quack ATTACH exposes the server's session catalogs; deep names like `remote.lake.schema.table` may need `quack_query()` until Quack nested-catalog support lands ([duckdb#22605](https://github.com/duckdb/duckdb/issues/22605)).
 
 ## Demo recipe (next step after compose e2e)

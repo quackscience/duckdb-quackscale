@@ -6,6 +6,24 @@ The image pulls the **latest** [GitHub release](https://github.com/quackscience/
 
 **Requires:** Linux, Docker Compose v2, `/dev/net/tun`, outbound HTTPS.
 
+## Basic testing
+
+**Compose (local):**
+
+```bash
+git pull && cd examples
+docker compose down --remove-orphans -v
+docker compose build quacktail-server quacktail-client
+docker compose up -d headscale quacktail-server
+docker compose --profile test run --rm quacktail-client
+```
+
+Expect `✓ Demo passed — two-node QuackTail cluster is working`.
+
+**CI (GitHub Actions):** run workflow [Headscale QuackTail e2e](../../.github/workflows/headscale-e2e.yml) (`workflow_dispatch`). Same client SQL path as compose (`client_init.sql` + `client_quack.sql`, `PASSED` row).
+
+**Next:** DuckLake on server + tailnet discovery — see [docs/DUCKLAKE_TAILNET.md](../docs/DUCKLAKE_TAILNET.md).
+
 ## Quick start
 
 ```bash

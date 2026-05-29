@@ -221,9 +221,11 @@ quacktail_ci_start_client() {
     "${QUACKTAIL_DOCKER_EXT_ARGS[@]}" \
     -e QUACKTAIL_ROLE=client \
     -e QUACKTAIL_WORK=/work \
+    -e QUACKTAIL_QUIET=1 \
     -e "QUACK_PORT=${port}" \
     -e "E2E_SERVER_IP=${server_ip}" \
     -e "E2E_SERVER_HOST=${server_host}" \
+    -e "QUACKTAIL_ATTACH_URI=${QUACKTAIL_ATTACH_URI:-quack:${server_ip}:${port}}" \
     -e "E2E_CROSS_NODE_GATE_ATTEMPTS=${E2E_CROSS_NODE_GATE_ATTEMPTS:-60}" \
     -e "E2E_CROSS_NODE_POLL_SEC=${E2E_CROSS_NODE_POLL_SEC:-2}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \

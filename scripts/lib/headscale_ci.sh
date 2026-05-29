@@ -564,3 +564,55 @@ SQL
 SELECT 'after_attach|ok';
 SQL
 }
+
+# Full client quack demo SQL (matches compose client_quack.sql — one remote op per statement).
+headscale_ci_sql_quack_client_demo() {
+  local attach_uri="$1"
+  local token="$2"
+  local secret_scope="$3"
+  headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
+  cat <<SQL
+
+LOAD quack;
+
+SQL
+  if headscale_ci_quack_uri_is_local "$attach_uri"; then
+    cat <<SQL
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${token}',
+    SCOPE '${secret_scope}'
+);
+
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack
+);
+SQL
+  else
+    cat <<SQL
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${token}',
+    SCOPE '${secret_scope}'
+);
+
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+SQL
+  fi
+  cat <<SQL
+
+INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
+ON CONFLICT DO NOTHING;
+
+SELECT
+    'PASSED' AS status,
+    '${attach_uri}' AS attach_uri,
+    MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
+    MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
+    COUNT(*)::INTEGER AS total_rows
+FROM remote.e2e_payload;
+SQL
+}
