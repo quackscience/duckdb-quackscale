@@ -2,7 +2,7 @@
 
 Two-node **Headscale + QuackTail** cluster on Linux — server and client DuckDB nodes on a shared tailnet, client `ATTACH`es the server's Quack endpoint.
 
-The image builds DuckDB + quackscale from this repo by default (`BUILD_FROM_SOURCE=1`). Set `BUILD_FROM_SOURCE=0` to use the latest GitHub release binary instead.
+The image builds DuckDB + quackscale from this repo by default (`BUILD_FROM_SOURCE=1`). Set `BUILD_FROM_SOURCE=0` to use the pinned GitHub release binary (`QUACKTAIL_RELEASE_TAG`, default `v1.0.3`).
 
 **Requires:** Linux, Docker Compose v2, `/dev/net/tun`, outbound HTTPS.
 
@@ -81,7 +81,7 @@ With the stack running, join the same Headscale tailnet from a host DuckDB:
 
 ```bash
 # repo root
-eval "$(bash scripts/ci_download_release_duckdb.sh latest)"
+eval "$(bash scripts/ci_download_release_duckdb.sh v1.0.3)"
 export QUACK_TAILNET_TOKEN=quackscale-demo-token
 
 cd examples
@@ -125,6 +125,7 @@ SQL
 | `QUACKTAIL_QUIET` | `1` (clean demo output) |
 | `HEADSCALE_USER` | `quackscale-demo` |
 | `GITHUB_REPO` | `quackscience/duckdb-quackscale` (build-time) |
+| `QUACKTAIL_RELEASE_TAG` | `v1.0.3` (build-time, when `BUILD_FROM_SOURCE=0`) |
 
 ## Teardown
 
@@ -149,7 +150,7 @@ docker compose --profile debug run --rm tailscale-probe
 
 **Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`
 
-**Client times out after `CREATE SECRET Success`** — ensure images include `tailscale_quack_forward` (`BUILD_FROM_SOURCE=1`). Client should `CALL tailscale_quack_forward(...)` then `ATTACH 'quack:127.0.0.1:19494'`.
+**Client times out after `CREATE SECRET Success`** — ensure images include `tailscale_quack_forward` (release `v1.0.3+` or `BUILD_FROM_SOURCE=1`). Client should `CALL tailscale_quack_forward(...)` then `ATTACH 'quack:127.0.0.1:19494'`.
 
 ```bash
 docker compose up -d --force-recreate quacktail-server

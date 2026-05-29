@@ -2,16 +2,18 @@
 # Build from repo root: docker build -f examples/Dockerfile -t quacktail:local .
 #
 # BUILD_FROM_SOURCE=1 (default in compose): build DuckDB + quackscale from this repo.
-# BUILD_FROM_SOURCE=0: pull latest GitHub release binary instead.
+# BUILD_FROM_SOURCE=0: pull pinned GitHub release binary (QUACKTAIL_RELEASE_TAG, default v1.0.3).
 
 ARG BUILD_FROM_SOURCE=1
 ARG GITHUB_REPO=quackscience/duckdb-quackscale
+ARG QUACKTAIL_RELEASE_TAG=v1.0.3
 ARG HEADSCALE_VERSION=0.28.0
 ARG TARGETARCH
 
 FROM ubuntu:24.04 AS builder
 ARG BUILD_FROM_SOURCE
 ARG GITHUB_REPO
+ARG QUACKTAIL_RELEASE_TAG
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ "$BUILD_FROM_SOURCE" = "1" ]; then \
@@ -36,6 +38,7 @@ FROM ubuntu:24.04
 
 ARG BUILD_FROM_SOURCE
 ARG GITHUB_REPO
+ARG QUACKTAIL_RELEASE_TAG
 ARG HEADSCALE_VERSION
 ARG TARGETARCH
 
@@ -51,7 +54,7 @@ RUN chmod +x /tmp/ci_download_release_duckdb.sh \
          install -m755 /opt/quacktail-build/duckdb /usr/local/bin/duckdb; \
        else \
          QUACKTAIL_RELEASE_DIR=/opt/quacktail-release GITHUB_REPOSITORY="${GITHUB_REPO}" \
-           bash -c 'eval "$(/tmp/ci_download_release_duckdb.sh latest)" && install -m755 "$DUCKDB" /usr/local/bin/duckdb && cp -a "$QUACKTAIL_RELEASE_ROOT/." /opt/quacktail/ 2>/dev/null || true'; \
+           bash -c 'eval "$(/tmp/ci_download_release_duckdb.sh '"${QUACKTAIL_RELEASE_TAG}"')" && install -m755 "$DUCKDB" /usr/local/bin/duckdb && cp -a "$QUACKTAIL_RELEASE_ROOT/." /opt/quacktail/ 2>/dev/null || true'; \
        fi \
     && rm -f /tmp/ci_download_release_duckdb.sh
 

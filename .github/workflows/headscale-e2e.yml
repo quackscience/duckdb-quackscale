@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'GitHub release tag (leave empty for latest)'
+        description: 'GitHub release tag (use "latest" for newest release)'
         required: false
-        default: latest
+        default: v1.0.3
         type: string
 
 env:
