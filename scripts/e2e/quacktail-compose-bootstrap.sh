@@ -24,16 +24,6 @@ ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
 
 write_client_demo_sql() {
   cat >"$WORK/client_demo.sql" <<SQL
-CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
-
-CREATE TEMP TABLE _probe AS
-SELECT q FROM quack_query(
-    '${ATTACH_URI}',
-    'SELECT 1 AS q',
-    token => '${QUACK_TOKEN}',
-    disable_ssl => true
-);
-
 CREATE SECRET (
     TYPE quack,
     TOKEN '${QUACK_TOKEN}',
@@ -56,19 +46,12 @@ SELECT
 SQL
 }
 
-write_client_run_sql() {
-  cat "$WORK/client_init.sql" "$WORK/client_demo.sql" >"$WORK/client_run.sql"
-}
-
-if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" && ! -f "$WORK/client_run.sql" ]]; then
-  [[ -f "$WORK/client_init.sql" ]] || { echo "error: missing $WORK/client_init.sql" >&2; exit 1; }
-  write_client_demo_sql
-  write_client_run_sql
-  echo "✓ added demo client SQL — attach URI ${ATTACH_URI}"
-  exit 0
-fi
-
-if [[ -f "$WORK/server_setup.sql" ]]; then
+if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
+  if [[ ! -f "$WORK/client_demo.sql" ]] || grep -q '_probe' "$WORK/client_demo.sql" 2>/dev/null; then
+    [[ -f "$WORK/client_init.sql" ]] || { echo "error: missing $WORK/client_init.sql" >&2; exit 1; }
+    write_client_demo_sql
+    echo "✓ demo client SQL ready — ${ATTACH_URI}"
+  fi
   exit 0
 fi
 
@@ -217,11 +200,7 @@ CALL tailscale_up(
 );
 SQL
 
-ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
-
 write_client_demo_sql
-
-write_client_run_sql
 
 cat >"$WORK/client_attach.sql" <<SQL
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();

@@ -32,8 +32,11 @@ quacktail_sql_extension_directory() {
 
 maybe_compose_bootstrap() {
   [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
-  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_run.sql" ]] && return 0
-  /usr/local/bin/quacktail-compose-bootstrap.sh
+  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_demo.sql" ]] || /usr/local/bin/quacktail-compose-bootstrap.sh
+  # Refresh demo SQL if an older version with streaming CTAS probes is on the volume.
+  if [[ -f "${WORK}/client_demo.sql" ]] && grep -q '_probe' "${WORK}/client_demo.sql" 2>/dev/null; then
+    /usr/local/bin/quacktail-compose-bootstrap.sh
+  fi
 }
 
 wait_for_tailnet_server() {
@@ -124,27 +127,28 @@ print_last_duckdb_table() {
   ' "$out"
 }
 
-ensure_client_run_sql() {
-  local run_sql="${WORK}/client_run.sql"
-  if [[ -f "$run_sql" ]]; then
+ensure_client_demo_sql() {
+  local demo_sql="${WORK}/client_demo.sql"
+  if [[ -f "$demo_sql" ]] && ! grep -q '_probe' "$demo_sql" 2>/dev/null; then
     return 0
   fi
-  if [[ -f "${WORK}/client_init.sql" && -f "${WORK}/client_demo.sql" ]]; then
-    cat "${WORK}/client_init.sql" "${WORK}/client_demo.sql" >"$run_sql"
-    return 0
+  if [[ -f "${WORK}/client_init.sql" ]]; then
+    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
-  echo "error: ${run_sql} missing (docker compose down -v && up to re-bootstrap)" >&2
-  exit 1
+  if [[ ! -f "$demo_sql" ]]; then
+    echo "error: ${demo_sql} missing (docker compose restart quacktail-server or down -v)" >&2
+    exit 1
+  fi
 }
 
 run_client_demo() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri="quack:${SERVER_HOST}:${PORT}"
-  local run_sql="${WORK}/client_run.sql"
+  local demo_sql="${WORK}/client_demo.sql"
   local out="${WORK}/client.out"
   local log="${WORK}/client.log"
 
-  ensure_client_run_sql
+  ensure_client_demo_sql
 
   echo ""
   echo "QuackTail cluster demo"
@@ -155,8 +159,8 @@ run_client_demo() {
   echo "→ join tailnet, ATTACH ${attach_uri}, verify cross-node queries ..."
   echo ""
 
-  if ! cat "$run_sql" | "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    >"$out" 2>"$log"; then
+  if ! cat "$demo_sql" | "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
+    -init "${WORK}/client_init.sql" >"$out" 2>"$log"; then
     echo "error: client demo failed" >&2
     if [[ -s "$log" ]]; then
       echo "--- log ---" >&2
