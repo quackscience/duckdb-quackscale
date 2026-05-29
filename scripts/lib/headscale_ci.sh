@@ -247,7 +247,8 @@ headscale_ci_verify_tailscale_client() {
   fi
 
   docker rm -f "$container" >/dev/null 2>&1 || true
-  rm -rf "$state_dir"
+  # Container runs as root; bind-mounted state files are not owned by the runner user.
+  rm -rf "$state_dir" 2>/dev/null || sudo rm -rf "$state_dir" 2>/dev/null || true
 
   if (( rc != 0 )); then
     return 1
