@@ -245,6 +245,42 @@ void TailscaleBridge::EnableQuackProxy() {
 	StartLoopbackProxy();
 }
 
+QuackForwardStatus TailscaleBridge::StartQuackForward(const string &host, idx_t port, idx_t local_port) {
+#ifdef QUACKSCALE_WITH_TAILSCALE
+	int ts_handle = -1;
+	{
+		std::lock_guard<std::mutex> guard(g_tailscale_mutex);
+		if (!running) {
+			throw InvalidInputException("tailscale_quack_forward: call tailscale_up() first");
+		}
+		EnsureHandle();
+		ts_handle = handle;
+	}
+	auto listen_port = local_port == 0 ? QUACKSCALE_DEFAULT_FORWARD_LOCAL_PORT : local_port;
+	auto dial_fn = [ts_handle](const string &network, const string &addr, int *conn_out) -> int {
+		std::lock_guard<std::mutex> dial_guard(g_tailscale_mutex);
+		tailscale_conn conn = -1;
+		auto rc = tailscale_dial(ts_handle, network.c_str(), addr.c_str(), &conn);
+		if (rc != 0) {
+			return rc;
+		}
+		*conn_out = conn;
+		return 0;
+	};
+	forwarder.Start(dial_fn, host, port, listen_port);
+	return forwarder.Status();
+#else
+	(void)host;
+	(void)port;
+	(void)local_port;
+	throw NotImplementedException("QuackScale was built without libtailscale.");
+#endif
+}
+
+QuackForwardStatus TailscaleBridge::ForwardStatus() const {
+	return forwarder.Status();
+}
+
 TailscaleProxyStatus TailscaleBridge::ProxyStatus() const {
 	return proxy_status;
 }
@@ -351,6 +387,7 @@ void TailscaleBridge::Shutdown() {
 	std::lock_guard<std::mutex> guard(g_tailscale_mutex);
 	log_capture.Stop();
 	JoinLoginThread();
+	forwarder.Stop();
 	ClearProxyEnvironment();
 #ifdef QUACKSCALE_WITH_TAILSCALE
 	if (handle >= 0) {

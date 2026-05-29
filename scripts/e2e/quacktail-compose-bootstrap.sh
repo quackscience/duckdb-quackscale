@@ -6,6 +6,7 @@ WORK="${QUACKTAIL_WORK:-/work}"
 SERVER_HOST="${SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${QUACK_PORT:-9494}"
+QUACK_FORWARD_LOCAL_PORT="${QUACK_FORWARD_LOCAL_PORT:-19494}"
 QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-demo-token}"
 CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://headscale:8080}"
 HS_USER="${HEADSCALE_USER:-quackscale-demo}"
@@ -28,8 +29,28 @@ resolve_server_tailnet_ip() {
 }
 
 resolve_attach_uri() {
-  # Match CI (E2E_QUACK_ATTACH_HOST=hostname): ATTACH hostname; entrypoint maps /etc/hosts → tailnet IP.
   echo "quack:${SERVER_HOST}:${QUACK_PORT}"
+}
+
+resolve_client_attach_uri() {
+  local ext_dir="/duckdb_extensions"
+  if command -v duckdb >/dev/null 2>&1 \
+    && duckdb :memory: -batch -csv -noheader -c \
+      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_quack_forward';" \
+      2>/dev/null | grep -qx '1'; then
+    echo "quack:127.0.0.1:${QUACK_FORWARD_LOCAL_PORT}"
+  else
+    resolve_attach_uri
+  fi
+}
+
+duckdb_has_quackscale_function() {
+  local fn="$1"
+  local ext_dir="/duckdb_extensions"
+  command -v duckdb >/dev/null 2>&1 \
+    && duckdb :memory: -batch -csv -noheader -c \
+      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
+      2>/dev/null | grep -qx '1'
 }
 
 write_server_quack_sql() {
@@ -65,19 +86,15 @@ write_client_session_sql() {
   local authkey="${1:?authkey required}"
   local attach_uri="${2:?attach uri required}"
   local ping_sql=""
-  local quack_proxy_sql=""
+  local forward_sql=""
   local ext_dir="/duckdb_extensions"
-  if command -v duckdb >/dev/null 2>&1 \
-    && duckdb :memory: -batch -csv -noheader -c \
-      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_ping';" \
-      2>/dev/null | grep -qx '1'; then
+  if duckdb_has_quackscale_function tailscale_ping; then
     ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
   fi
-  if command -v duckdb >/dev/null 2>&1 \
-    && duckdb :memory: -batch -csv -noheader -c \
-      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_quack_proxy';" \
-      2>/dev/null | grep -qx '1'; then
-    quack_proxy_sql="CALL tailscale_quack_proxy();"
+  if duckdb_has_quackscale_function tailscale_quack_forward; then
+    forward_sql="CALL tailscale_quack_forward(host => '${SERVER_HOST}', port => ${QUACK_PORT}, local_port => ${QUACK_FORWARD_LOCAL_PORT});"
+  elif duckdb_has_quackscale_function tailscale_quack_proxy; then
+    forward_sql="CALL tailscale_quack_proxy();"
   fi
   cat >"$WORK/client_session.sql" <<SQL
 LOAD quackscale;
@@ -90,7 +107,7 @@ CALL tailscale_up(
     ephemeral => true
 );
 
-${quack_proxy_sql}
+${forward_sql}
 
 ${ping_sql}
 
@@ -197,7 +214,7 @@ SQL
 refresh_client_sql() {
   local authkey="${1:?authkey required}"
   local attach_uri
-  attach_uri="$(resolve_attach_uri)"
+  attach_uri="$(resolve_client_attach_uri)"
   ATTACH_URI="$attach_uri"
   write_client_session_sql "$authkey" "$attach_uri"
   write_client_quack_sql "$attach_uri"

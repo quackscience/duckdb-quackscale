@@ -16,6 +16,7 @@ name: quacktail-demo
 
 x-env: &env
   QUACK_PORT: "9494"
+  QUACK_FORWARD_LOCAL_PORT: "19494"
   QUACK_TAILNET_TOKEN: ${QUACK_TAILNET_TOKEN:-quackscale-demo-token}
   QUACKTAIL_QUIET: "1"
   QUACKTAIL_DEMO_TIMEOUT_SEC: "90"

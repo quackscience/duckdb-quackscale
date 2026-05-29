@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(src/include)
 
-set(EXTENSION_SOURCES src/quackscale_extension.cpp src/tailscale_bridge.cpp src/tailscale_log_capture.cpp)
+set(EXTENSION_SOURCES src/quackscale_extension.cpp src/tailscale_bridge.cpp src/tailscale_forwarder.cpp src/tailscale_log_capture.cpp)
 
 if(QUACKSCALE_WITH_TAILSCALE)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Libtailscale.cmake)

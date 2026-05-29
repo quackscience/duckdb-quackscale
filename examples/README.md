@@ -150,14 +150,7 @@ docker compose --profile debug run --rm tailscale-probe
 
 **Server restart loop** — check `docker compose logs quacktail-server`; for libtailscale detail: `docker compose exec quacktail-server tail -50 /work/server.log`
 
-**Client times out after `CREATE SECRET Success`** — tailnet join succeeded; stall is on `tailscale_ping`, `quack_query`, or `ATTACH`. Ensure images were rebuilt from source (`BUILD_FROM_SOURCE=1`, default) so `loopback_proxy` is active. Check:
-
-```sql
-CALL tailscale_proxy_status();
--- active=true, proxy_url=socks5h://tsnet:***@127.0.0.1:...
-```
-
-Recreate the server after script changes:
+**Client times out after `CREATE SECRET Success`** — ensure images include `tailscale_quack_forward` (`BUILD_FROM_SOURCE=1`). Client should `CALL tailscale_quack_forward(...)` then `ATTACH 'quack:127.0.0.1:19494'`.
 
 ```bash
 docker compose up -d --force-recreate quacktail-server

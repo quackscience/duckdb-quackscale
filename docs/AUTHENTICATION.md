@@ -43,25 +43,24 @@ The libtailscale C API exposes `tailscale_set_authkey`, `tailscale_set_dir`, `ta
 
 Reference: [tsnet.Server · Tailscale Docs](https://tailscale.com/kb/1522/tsnet-server).
 
-## Loopback proxy (Quack HTTP over the tailnet)
+## Loopback forward (Quack HTTP over the tailnet)
 
-Embedded tsnet can dial peers (`tailscale_ping`), but **Quack uses normal HTTP/TCP** (curl). Kernel sockets do not reach tailnet IPs unless a full `tailscaled` is running.
+Embedded tsnet can dial peers (`tailscale_ping`), but **Quack uses normal HTTP/TCP**. Kernel sockets cannot reach tailnet IPs without help.
 
-By default, `CALL tailscale_up(...)` **only joins the tailnet** — it does not start the SOCKS proxy (starting it inline broke `tailscale_serve_local` and could hang join).
-
-Before Quack `quack_query` / `ATTACH` to a remote peer, call:
+The native libtailscale path ([tsnetctest](https://github.com/tailscale/libtailscale/blob/main/tsnetctest/tsnetctest.go)) uses `tailscale_dial`. QuackScale exposes that for Quack via a **localhost TCP forwarder** — no SOCKS, no `ALL_PROXY`:
 
 ```sql
 CALL tailscale_up(hostname => 'my-client', authkey => '...', state_dir => '/var/lib/duckdb/ts');
-CALL tailscale_quack_proxy();  -- sets ALL_PROXY=socks5h://tsnet:...@127.0.0.1:...
-CALL tailscale_proxy_status();
+CALL tailscale_quack_forward(host => 'peer-hostname', port => 9494, local_port => 19494);
+-- quack_uri => quack:127.0.0.1:19494
+
+CREATE SECRET (TYPE quack, TOKEN '...', SCOPE 'quack:127.0.0.1:19494');
+ATTACH 'quack:127.0.0.1:19494' AS remote (TYPE quack, DISABLE_SSL true);
 ```
 
-`tailscale_quack_proxy()` starts libtailscale loopback SOCKS and sets `ALL_PROXY` / `all_proxy` only (not `HTTP_PROXY`, which breaks tsnet LocalClient). `headscale` is added to `NO_PROXY`.
+`tailscale_quack_forward` listens on `127.0.0.1:local_port` and dials `host:port` over tsnet for each Quack HTTP connection.
 
-Legacy: `loopback_proxy => true` on `tailscale_up` still works but is discouraged.
-
-Disable entirely with `loopback_proxy => false` if you run system `tailscaled`.
+Legacy: `CALL tailscale_quack_proxy()` (SOCKS + `ALL_PROXY`) remains but is deprecated.
 
 ## Recommended patterns
 

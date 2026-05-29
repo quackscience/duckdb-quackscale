@@ -38,6 +38,11 @@ CALL tailscale_quack_proxy();
 tailscale loopback proxy: call tailscale_up() first
 
 statement error
+CALL tailscale_quack_forward(host => 'peer.example', port => 9494);
+----
+tailscale_quack_forward: call tailscale_up() first
+
+statement error
 SELECT quack_uri();
 ----
 Tailscale is not up

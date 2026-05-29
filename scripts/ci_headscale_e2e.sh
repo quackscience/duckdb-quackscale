@@ -97,8 +97,8 @@ echo "=== Resolving server tailnet IP ==="
 SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 60)"
 echo "Server tailnet IP: ${SERVER_IP}"
 
-SERVER_QUACK_URI="$(headscale_ci_e2e_quack_attach_uri "$SERVER_IP" "$QUACK_PORT")"
-echo "Client will ATTACH: ${SERVER_QUACK_URI}"
+SERVER_QUACK_URI="$(headscale_ci_quack_forward_local_uri "${E2E_FORWARD_LOCAL_PORT:-19494}")"
+echo "Client will ATTACH via forwarder: ${SERVER_QUACK_URI} → ${SERVER_HOST}:${QUACK_PORT}"
 printf '%s' "$SERVER_QUACK_URI" >"$WORK/attach_uri"
 
 headscale_ci_sql_client_session "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY" \

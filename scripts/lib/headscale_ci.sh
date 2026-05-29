@@ -565,7 +565,13 @@ SELECT 'after_attach|ok';
 SQL
 }
 
-# Full client demo: one DuckDB session — tailscale_up, tailscale_ping, quack_query probe, ATTACH, verify.
+# Client ATTACH via localhost forwarder (tailscale_dial); falls back to direct tailnet URI when unset.
+headscale_ci_quack_forward_local_uri() {
+  local port="${1:-19494}"
+  echo "quack:127.0.0.1:${port}"
+}
+
+# Full client demo: one DuckDB session — tailscale_up, tailscale_quack_forward, tailscale_ping, quack_query probe, ATTACH, verify.
 headscale_ci_sql_client_session() {
   local client_host="$1"
   local client_state="$2"
@@ -574,6 +580,7 @@ headscale_ci_sql_client_session() {
   local quack_port="$5"
   local attach_uri="$6"
   local token="$7"
+  local forward_port="${E2E_FORWARD_LOCAL_PORT:-19494}"
   cat <<SQL
 LOAD quackscale;
 
@@ -585,7 +592,7 @@ CALL tailscale_up(
     ephemeral => true
 );
 
-CALL tailscale_quack_proxy();
+CALL tailscale_quack_forward(host => '${server_host}', port => ${quack_port}, local_port => ${forward_port});
 
 CALL tailscale_ping(host => '${server_host}', port => ${quack_port});
 

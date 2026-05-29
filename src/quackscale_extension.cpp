@@ -402,6 +402,59 @@ static void QuackscaleQuackProxyFunction(ClientContext &context, TableFunctionIn
 	bind.finished = true;
 }
 
+struct QuackscaleQuackForwardBindData : public TableFunctionData {
+	string host;
+	idx_t port = QUACKSCALE_DEFAULT_QUACK_PORT;
+	idx_t local_port = QUACKSCALE_DEFAULT_FORWARD_LOCAL_PORT;
+	bool finished = false;
+};
+
+static unique_ptr<FunctionData> QuackscaleQuackForwardBind(ClientContext &context, TableFunctionBindInput &input,
+                                                           vector<LogicalType> &return_types, vector<string> &names) {
+	auto bind = make_uniq<QuackscaleQuackForwardBindData>();
+	auto host_it = input.named_parameters.find("host");
+	if (host_it == input.named_parameters.end() || host_it->second.IsNull()) {
+		throw InvalidInputException("tailscale_quack_forward requires named parameter host");
+	}
+	bind->host = host_it->second.GetValue<string>();
+	auto port_it = input.named_parameters.find("port");
+	if (port_it != input.named_parameters.end()) {
+		auto port = port_it->second.GetValue<int64_t>();
+		if (port <= 0 || port > 65535) {
+			throw InvalidInputException("tailscale_quack_forward port must be between 1 and 65535");
+		}
+		bind->port = NumericCast<idx_t>(port);
+	}
+	auto local_it = input.named_parameters.find("local_port");
+	if (local_it != input.named_parameters.end()) {
+		auto port = local_it->second.GetValue<int64_t>();
+		if (port < 0 || port > 65535) {
+			throw InvalidInputException("tailscale_quack_forward local_port must be between 0 and 65535");
+		}
+		bind->local_port = NumericCast<idx_t>(port);
+	}
+
+	return_types = {LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER,
+	                LogicalType::VARCHAR};
+	names = {"active", "remote_host", "remote_port", "local_port", "quack_uri"};
+	return std::move(bind);
+}
+
+static void QuackscaleQuackForwardFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &bind = data_p.bind_data->CastNoConst<QuackscaleQuackForwardBindData>();
+	if (bind.finished) {
+		return;
+	}
+	auto forward = TailscaleBridge::Get().StartQuackForward(bind.host, bind.port, bind.local_port);
+	output.SetCardinality(1);
+	output.SetValue(0, 0, Value::BOOLEAN(forward.active));
+	output.SetValue(1, 0, forward.remote_host.empty() ? Value() : Value(forward.remote_host));
+	output.SetValue(2, 0, Value::INTEGER(NumericCast<int32_t>(forward.remote_port)));
+	output.SetValue(3, 0, Value::INTEGER(NumericCast<int32_t>(forward.local_port)));
+	output.SetValue(4, 0, forward.quack_uri.empty() ? Value() : Value(forward.quack_uri));
+	bind.finished = true;
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction up_function("tailscale_up", {}, QuackscaleUpFunction, QuackscaleUpBind);
 	RegisterAuthParameters(up_function);
@@ -422,6 +475,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	loader.RegisterFunction(TableFunction("tailscale_quack_proxy", {}, QuackscaleQuackProxyFunction,
 	                                      QuackscaleQuackProxyBind));
+
+	TableFunction forward_function("tailscale_quack_forward", {}, QuackscaleQuackForwardFunction,
+	                               QuackscaleQuackForwardBind);
+	forward_function.named_parameters["host"] = LogicalType::VARCHAR;
+	forward_function.named_parameters["port"] = LogicalType::BIGINT;
+	forward_function.named_parameters["local_port"] = LogicalType::BIGINT;
+	loader.RegisterFunction(forward_function);
 
 	TableFunction discover_function("quack_discover", {}, QuackscaleDiscoverFunction, QuackscaleDiscoverBind);
 	discover_function.named_parameters["port"] = LogicalType::BIGINT;

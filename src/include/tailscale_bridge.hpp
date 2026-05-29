@@ -4,6 +4,7 @@
 #include "duckdb/common/vector.hpp"
 #include "quackscale_defaults.hpp"
 #include "tailscale_log_capture.hpp"
+#include "tailscale_forwarder.hpp"
 
 #include <thread>
 
@@ -65,8 +66,11 @@ public:
 	void BeginInteractiveLogin(const TailscaleAuthConfig &config);
 	TailscaleLoginStatus LoginStatus() const;
 	TailscaleProxyStatus ProxyStatus() const;
-	//! Enable tsnet SOCKS for Quack HTTP (call after tailscale_up, before LOAD quack).
+	QuackForwardStatus ForwardStatus() const;
+	//! Enable tsnet SOCKS for Quack HTTP (legacy; prefer tailscale_quack_forward).
 	void EnableQuackProxy();
+	//! Listen on 127.0.0.1 and dial the tailnet peer via tailscale_dial (no ALL_PROXY).
+	QuackForwardStatus StartQuackForward(const string &host, idx_t port, idx_t local_port);
 	void Shutdown();
 
 	//! Tailscale Serve: expose listen_port on the tailnet, TCP-forward to 127.0.0.1:local_port.
@@ -118,6 +122,7 @@ private:
 	TailscaleLogCapture log_capture;
 	TailscaleProxyStatus proxy_status;
 	SavedProxyEnv saved_proxy_env;
+	TailscaleForwarder forwarder;
 };
 
 } // namespace duckdb

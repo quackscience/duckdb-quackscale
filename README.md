@@ -173,8 +173,9 @@ Load with `LOAD quackscale;`. Use **`CALL`** for table functions (same style as 
 | `CALL tailscale_login(...)` | Non-blocking join; returns `login_url` for browser auth |
 | `CALL tailscale_login_status()` | Poll login (`starting` / `needs_login` / `up` / `error`) |
 | `CALL tailscale_status()` | libtailscale linked?, running, hostname, tailnet IPs |
-| `CALL tailscale_quack_proxy()` | After `tailscale_up`: tsnet SOCKS + `ALL_PROXY` for Quack HTTP to tailnet peers |
-| `CALL tailscale_proxy_status()` | Loopback SOCKS status (`active`, `listen_addr`, `proxy_url`) |
+| `CALL tailscale_quack_forward(host => 'peer', port => 9494)` | Localhost TCP → `tailscale_dial` (preferred for Quack ATTACH; no ALL_PROXY) |
+| `CALL tailscale_quack_proxy()` | Legacy SOCKS + ALL_PROXY |
+| `CALL tailscale_proxy_status()` | Legacy SOCKS status |
 
 ### Quack on tailnet (helpers; requires core `quack` for `quack_serve`)
 
