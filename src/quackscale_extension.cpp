@@ -97,9 +97,9 @@ struct QuackscaleStatusBindData : public TableFunctionData {
 };
 
 static unique_ptr<FunctionData> QuackscaleStatusBind(ClientContext &context, TableFunctionBindInput &input,
-                                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                                     vector<LogicalType> &return_types, vector<string> &names) {
 	return_types = {LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
-	                  LogicalType::LIST(LogicalType::VARCHAR)};
+	                LogicalType::LIST(LogicalType::VARCHAR)};
 	names = {"libtailscale_linked", "running", "hostname", "tailnet_ips"};
 	return make_uniq<QuackscaleStatusBindData>();
 }
@@ -221,8 +221,8 @@ struct QuackscaleLoginStatusBindData : public TableFunctionData {
 
 static unique_ptr<FunctionData> QuackscaleLoginStatusBind(ClientContext &context, TableFunctionBindInput &input,
                                                           vector<LogicalType> &return_types, vector<string> &names) {
-	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
-	                  LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)};
 	names = {"status", "login_url", "message", "running", "hostname", "tailnet_ips"};
 	return make_uniq<QuackscaleLoginStatusBindData>();
 }
@@ -295,5 +295,4 @@ extern "C" {
 DUCKDB_CPP_EXTENSION_ENTRY(quackscale, loader) {
 	duckdb::LoadInternal(loader);
 }
-
 }

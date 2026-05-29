@@ -59,9 +59,8 @@ void TailscaleBridge::EnsureHandle() {
 		throw IOException("tailscale_new failed");
 	}
 #else
-	throw NotImplementedException(
-	    "QuackScale was built without libtailscale (QUACKSCALE_WITH_TAILSCALE=OFF). "
-	    "Install Go and rebuild with QUACKSCALE_WITH_TAILSCALE=ON.");
+	throw NotImplementedException("QuackScale was built without libtailscale (QUACKSCALE_WITH_TAILSCALE=OFF). "
+	                              "Install Go and rebuild with QUACKSCALE_WITH_TAILSCALE=ON.");
 #endif
 }
 
