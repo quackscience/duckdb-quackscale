@@ -42,6 +42,36 @@ e2e_run_duckdb() {
   fi
 }
 
+e2e_dump_logs() {
+  if [[ -z "${WORK:-}" ]]; then
+    return 0
+  fi
+  echo "::group::E2e server log"
+  if [[ -f "${SERVER_LOG:-}" ]]; then
+    cat "$SERVER_LOG"
+  else
+    echo "(no server log)"
+  fi
+  echo "::endgroup::"
+  echo "::group::E2e client log"
+  if [[ -f "${CLIENT_LOG:-}" ]]; then
+    cat "$CLIENT_LOG"
+  else
+    echo "(no client log)"
+  fi
+  echo "::endgroup::"
+  if [[ -d "$WORK" ]]; then
+    echo "::group::E2e work directory ($WORK)"
+    ls -la "$WORK" || true
+    for sql in "$WORK"/*.sql; do
+      [[ -f "$sql" ]] || continue
+      echo "--- $(basename "$sql") ---"
+      cat "$sql"
+    done
+    echo "::endgroup::"
+  fi
+}
+
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
@@ -51,7 +81,7 @@ cleanup() {
     headscale_ci_stop
   fi
 }
-trap cleanup EXIT
+trap 'e2e_dump_logs; cleanup' EXIT
 
 if [[ ! -x "$DUCKDB" ]]; then
   echo "error: DuckDB not found at '$DUCKDB'" >&2
@@ -136,7 +166,10 @@ CALL quack_serve(
 );
 SQL
 
-echo "Starting Quack listener on server..."
+echo "=== Starting Quack listener on server ==="
+echo "--- SQL: server_serve.sql ---"
+cat "$WORK/server_serve.sql"
+echo "--- DuckDB server output (streamed) ---"
 python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/server_serve.sql" "$SERVER_LOG" &
 SERVER_PID=$!
 
@@ -148,7 +181,9 @@ kill -0 "$SERVER_PID" || {
   exit 1
 }
 
+echo "Waiting for Quack listener on ${SERVER_IP}:${QUACK_PORT} ..."
 headscale_ci_wait_tcp "$SERVER_IP" "$QUACK_PORT"
+echo "Quack listener is reachable on ${SERVER_IP}:${QUACK_PORT}"
 
 cat >"$WORK/client.sql" <<SQL
 LOAD quack;
@@ -185,7 +220,10 @@ SELECT 'client_msg', msg FROM remote.e2e_payload WHERE source = 'client';
 SELECT 'server_msg', msg FROM remote.e2e_payload WHERE source = 'server';
 SQL
 
-echo "Running QuackTail client ($CLIENT_HOST)..."
+echo "=== Running QuackTail client ($CLIENT_HOST) ==="
+echo "--- SQL: client.sql ---"
+cat "$WORK/client.sql"
+echo "--- DuckDB output ---"
 CLIENT_OUT=""
 CLIENT_OUT="$("$DUCKDB" :memory: -batch -echo -f "$WORK/client.sql" 2>&1 | tee -a "$CLIENT_LOG")"
 CLIENT_RC=${PIPESTATUS[0]}
@@ -195,9 +233,28 @@ if (( CLIENT_RC != 0 )); then
   exit 1
 fi
 
-echo "$CLIENT_OUT" | grep -q 'discover_count|1' || { echo "error: quack_discover failed" >&2; exit 1; }
-echo "$CLIENT_OUT" | grep -q 'row_count|2' || { echo "error: expected 2 rows" >&2; exit 1; }
-echo "$CLIENT_OUT" | grep -q 'client_msg|insert-from-client' || { echo "error: client INSERT missing" >&2; exit 1; }
-echo "$CLIENT_OUT" | grep -q 'server_msg|seed-from-server' || { echo "error: server seed missing" >&2; exit 1; }
+echo "=== Result rows ==="
+echo "$CLIENT_OUT" | grep -E 'discover_count|row_count|client_msg|server_msg' || true
+
+assert_client_row() {
+  local pattern="$1"
+  local label="$2"
+  if echo "$CLIENT_OUT" | grep -q "$pattern"; then
+    echo "ok: $label"
+  else
+    echo "error: $label (expected to match: $pattern)" >&2
+    echo "full client output:" >&2
+    echo "$CLIENT_OUT" >&2
+    exit 1
+  fi
+}
+
+assert_client_row 'discover_count|1' 'quack_discover found server'
+assert_client_row 'row_count|2' 'remote table has 2 rows'
+assert_client_row 'client_msg|insert-from-client' 'client INSERT visible'
+assert_client_row 'server_msg|seed-from-server' 'server seed visible'
+
+echo "=== Headscale nodes after e2e ==="
+headscale_ci_exec headscale nodes list || true
 
 echo "Headscale QuackTail e2e passed."

@@ -61,13 +61,15 @@ headscale_ci_wait_ready() {
   local attempt=0
   while (( attempt < 60 )); do
     attempt=$((attempt + 1))
-    if curl -fsS "${HEADSCALE_CONTROL_URL}/health" >/dev/null 2>&1; then
+    if response="$(curl -fsS "${HEADSCALE_CONTROL_URL}/health" 2>/dev/null)"; then
+      echo "Headscale health: $response"
       headscale_ci_ensure_user
       echo "Headscale is ready."
       return 0
     fi
     if (( attempt % 5 == 0 )); then
-      echo "  attempt $attempt ..."
+      echo "  attempt $attempt (health check) ..."
+      curl -v "${HEADSCALE_CONTROL_URL}/health" || true
       docker inspect --format='health={{.State.Health.Status}}' "$HEADSCALE_CONTAINER" 2>/dev/null || true
     fi
     sleep 2
@@ -227,13 +229,15 @@ headscale_ci_verify_tailscale_client() {
 
   set +e
   for attempt in $(seq 1 30); do
-    if docker exec "$container" tailscale status 2>/dev/null; then
+    echo "--- tailscale status (attempt $attempt) ---"
+    if docker exec "$container" tailscale status; then
       rc=0
       break
     fi
     if (( attempt % 5 == 0 )); then
       echo "  waiting for Tailscale client (attempt $attempt) ..."
-      docker logs "$container" 2>&1 | tail -5 || true
+      echo "--- tailscale container logs ---"
+      docker logs "$container" 2>&1 | tail -20 || true
     fi
     sleep 2
   done
@@ -241,9 +245,13 @@ headscale_ci_verify_tailscale_client() {
 
   if (( rc != 0 )); then
     echo "error: Tailscale client could not join at ${HEADSCALE_CONTROL_URL}" >&2
+    echo "--- tailscale container logs (failure) ---" >&2
     docker logs "$container" 2>&1 | tail -50 >&2 || true
     headscale_ci_logs
     headscale_ci_exec headscale nodes list >&2 || true
+  else
+    echo "--- tailscale container logs (success) ---"
+    docker logs "$container" 2>&1 | tail -30 || true
   fi
 
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -338,7 +346,9 @@ PY
 headscale_ci_wait_tcp() {
   local host="${1:?host}"
   local port="${2:?port}"
+  local attempt=0
   for _ in $(seq 1 60); do
+    attempt=$((attempt + 1))
     if python3 - "$host" "$port" <<'PY'
 import socket, sys
 host, port = sys.argv[1], int(sys.argv[2])
@@ -354,7 +364,11 @@ finally:
     s.close()
 PY
     then
+      echo "TCP connect ok: ${host}:${port} (attempt ${attempt})"
       return 0
+    fi
+    if (( attempt % 10 == 0 )); then
+      echo "  still waiting for ${host}:${port} (attempt ${attempt}) ..."
     fi
     sleep 2
   done

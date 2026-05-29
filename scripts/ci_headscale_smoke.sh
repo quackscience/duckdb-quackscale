@@ -33,6 +33,18 @@ AUTHKEY="$(headscale_ci_create_authkey)"
 headscale_ci_verify_tailscale_client "$AUTHKEY" "quackscale-smoke"
 
 echo "Joining Headscale from DuckDB (control_url=$HEADSCALE_CONTROL_URL) ..."
+echo "--- SQL ---"
+cat <<SQL
+CALL tailscale_up(
+    hostname => 'quackscale-ci',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${AUTHKEY}',
+    state_dir => '${STATE_DIR}',
+    ephemeral => true
+);
+CALL tailscale_status();
+SQL
+echo "--- DuckDB output ---"
 "$DUCKDB" :memory: -batch -echo <<SQL
 CALL tailscale_up(
     hostname => 'quackscale-ci',
@@ -43,5 +55,8 @@ CALL tailscale_up(
 );
 CALL tailscale_status();
 SQL
+
+echo "=== Headscale nodes after smoke ==="
+headscale_ci_exec headscale nodes list || true
 
 echo "Headscale + QuackTail smoke test passed."

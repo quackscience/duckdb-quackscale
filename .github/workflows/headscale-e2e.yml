@@ -60,10 +60,11 @@ jobs:
 
       - name: Install quack extension
         run: |
-          if ! "$DUCKDB" -c "LOAD quack; SELECT 1;"; then
+          echo "=== LOAD quack ==="
+          if ! "$DUCKDB" :memory: -batch -echo -c "LOAD quack; SELECT 'quack_loaded' AS status;"; then
             echo "Installing quack from DuckDB core ..."
-            "$DUCKDB" -c "INSTALL quack FROM core; LOAD quack; SELECT 1;" \
-              || "$DUCKDB" -c "INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+            "$DUCKDB" :memory: -batch -echo -c "INSTALL quack FROM core; LOAD quack; SELECT 'quack_installed' AS status;" \
+              || "$DUCKDB" :memory: -batch -echo -c "INSTALL quack FROM core_nightly; LOAD quack; SELECT 'quack_installed_nightly' AS status;"
           fi
 
       - name: DuckDB tailscale_up smoke
@@ -82,7 +83,16 @@ jobs:
           );
           CALL tailscale_status();
           SQL
+          echo "=== DuckDB tailscale_up smoke ==="
+          echo "--- SQL ---"
+          cat "$RUNNER_TEMP/tailscale_smoke.sql"
+          echo "--- DuckDB output ---"
           "$DUCKDB" :memory: -batch -echo -f "$RUNNER_TEMP/tailscale_smoke.sql"
+          echo "=== Headscale nodes after smoke ==="
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_exec headscale nodes list || true
 
       - name: Run Headscale QuackTail e2e
         env:
@@ -101,8 +111,8 @@ jobs:
           source scripts/lib/headscale_ci.sh
           headscale_ci_stop
 
-      - name: Upload e2e logs on failure
-        if: failure()
+      - name: Upload e2e logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: headscale-e2e-logs
