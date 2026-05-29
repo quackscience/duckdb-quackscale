@@ -30,29 +30,14 @@ Three services: `headscale`, `quacktail-server`, `quacktail-client` (test profil
   (libtailscale logs → /work/server.log)
 ```
 
-**Client** (`docker compose --profile test run --rm quacktail-client`):
+**Client** — one DuckDB session (tailnet join stays up for discover + ATTACH). libtailscale logs stream live via `tee`:
 
 ```
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
+→ join tailnet as quacktail-client, discover, ATTACH quack:quacktail-server:9494 ...
 
-QuackTail cluster demo
-======================
-→ join tailnet as quacktail-client ...
-
-┌─────────┬──────────────────┬───────────────────────────────────┐
-│ running │     hostname     │            tailnet_ips            │
-│ true    │ quacktail-client │ [100.64.0.2, 'fd7a:115c:a1e0::2'] │
-└─────────┴──────────────────┴───────────────────────────────────┘
-
-→ quack_discover() + quack_query probe + ATTACH quack:quacktail-server:9494 ...
-
-┌ ... quack_discover() endpoints on tailnet ... ┐
-┌──────────────┐
-│ probe_result │
-│      1       │
-└──────────────┘
-┌─────────┬ ... ── PASSED: server_row, client_row, total_rows=2 ──┐
+(tailscale_up table, quack_discover, probe_result, PASSED summary — streamed as they run)
 
 ✓ Demo passed — two-node QuackTail cluster is working
 ```

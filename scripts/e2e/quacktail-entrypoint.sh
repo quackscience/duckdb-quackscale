@@ -32,20 +32,25 @@ quacktail_sql_extension_directory() {
 
 maybe_compose_bootstrap() {
   [[ "${QUACKTAIL_AUTO_BOOTSTRAP:-}" == "1" ]] || return 0
-  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_demo.sql" ]] || /usr/local/bin/quacktail-compose-bootstrap.sh
+  [[ -f "${WORK}/server_setup.sql" && -f "${WORK}/client_demo.sql" && -f "${WORK}/client_init.sql" ]] \
+    || /usr/local/bin/quacktail-compose-bootstrap.sh
   if [[ -f "${WORK}/client_demo.sql" ]] && ! grep -q 'quack_discover' "${WORK}/client_demo.sql" 2>/dev/null; then
     /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
+}
+
+headscale_cmd() {
+  local -a hs=(headscale)
+  if [[ -n "${HEADSCALE_CONFIG:-}" ]]; then
+    hs+=(-c "$HEADSCALE_CONFIG")
+  fi
+  "${hs[@]}" "$@"
 }
 
 wait_for_tailnet_server() {
   [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
   local node="$QUACKTAIL_WAIT_SERVER"
   local attempts="${QUACKTAIL_WAIT_ATTEMPTS:-90}"
-  local -a hs_cmd=(headscale)
-  if [[ -n "${HEADSCALE_CONFIG:-}" ]]; then
-    hs_cmd+=(-c "$HEADSCALE_CONFIG")
-  fi
   if ! command -v headscale >/dev/null 2>&1; then
     [[ "$QUIET" == "1" ]] || echo "warn: headscale CLI missing; skipping tailnet wait for ${node}" >&2
     return 0
@@ -57,7 +62,7 @@ wait_for_tailnet_server() {
   fi
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if "${hs_cmd[@]}" nodes list 2>/dev/null | grep -Fq "$node"; then
+    if headscale_cmd nodes list 2>/dev/null | grep -Fq "$node"; then
       [[ "$QUIET" == "1" ]] && echo "✓ ${node} on tailnet"
       [[ "$QUIET" == "1" ]] || echo "Tailnet node ${node} is registered."
       return 0
@@ -65,8 +70,19 @@ wait_for_tailnet_server() {
     sleep 2
   done
   echo "error: ${node} not registered on tailnet after ${attempts} attempts" >&2
-  "${hs_cmd[@]}" nodes list >&2 || true
+  headscale_cmd nodes list >&2 || true
   return 1
+}
+
+wait_for_server_quack() {
+  [[ -n "${QUACKTAIL_WAIT_SERVER:-}" ]] || return 0
+  local server_ip=""
+  server_ip="$(headscale_cmd nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true)"
+  if [[ -z "$server_ip" ]]; then
+    echo "warn: could not resolve ${SERVER_HOST} tailnet IP for Quack readiness gate" >&2
+    return 0
+  fi
+  quacktail_wait_quack_endpoint "$server_ip" "$PORT" "${QUACK_TAILNET_TOKEN:-}" "server Quack"
 }
 
 run_server() {
@@ -105,7 +121,6 @@ run_client_verbose() {
     -init "${WORK}/client_init.sql" -batch -echo
 }
 
-# Print every DuckDB ASCII result table from captured output.
 print_duckdb_tables() {
   local out="${1:?output file}"
   awk '
@@ -138,11 +153,9 @@ ensure_client_demo_sql() {
   if [[ -f "$demo_sql" ]] && grep -q 'quack_discover' "$demo_sql" 2>/dev/null; then
     return 0
   fi
-  if [[ -f "${WORK}/client_init.sql" ]]; then
-    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
-  fi
+  QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   if [[ ! -f "$demo_sql" ]]; then
-    echo "error: ${demo_sql} missing (docker compose restart quacktail-server or down -v)" >&2
+    echo "error: ${demo_sql} missing" >&2
     exit 1
   fi
 }
@@ -151,9 +164,9 @@ run_client_demo() {
   local client_db="${WORK}/client.duckdb"
   local attach_uri="quack:${SERVER_HOST}:${PORT}"
   local demo_sql="${WORK}/client_demo.sql"
-  local join_out="${WORK}/client_join.out"
-  local demo_out="${WORK}/client.out"
-  local log="${WORK}/client.log"
+  local out="${WORK}/client.out"
+  local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-300}"
+  local duckdb_rc=0
 
   ensure_client_demo_sql
 
@@ -162,36 +175,27 @@ run_client_demo() {
   echo "======================"
 
   ensure_quack
+  wait_for_server_quack
 
-  echo "→ join tailnet as ${CLIENT_HOST} ..."
+  echo "→ join tailnet as ${CLIENT_HOST}, discover, ATTACH ${attach_uri} ..."
   echo ""
-  if ! "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    -init "${WORK}/client_init.sql" >"$join_out" 2>"$log"; then
-    echo "error: tailnet join failed" >&2
-    tail -20 "$log" >&2
-    exit 1
-  fi
-  print_duckdb_tables "$join_out"
 
-  echo "→ quack_discover() + quack_query probe + ATTACH ${attach_uri} ..."
-  echo ""
-  if ! cat "$demo_sql" | "$DUCKDB" -bail -batch -cmd "$(quacktail_sql_extension_directory)" "$client_db" \
-    >"$demo_out" 2>>"$log"; then
-    echo "error: client demo failed" >&2
-    if [[ -s "$log" ]]; then
-      echo "--- log ---" >&2
-      tail -40 "$log" >&2
-    fi
-    if [[ -s "$demo_out" ]]; then
-      echo "--- output ---" >&2
-      tail -40 "$demo_out" >&2
-    fi
+  # One DuckDB session (same as CI verbose client): -init tailscale_up, then demo SQL on stdin.
+  # tee keeps tsnet/libtailscale lines visible while the run is in progress.
+  set +o pipefail
+  timeout "$demo_timeout" bash -c '
+    cat "$1" | stdbuf -oL -eL "$2" -bail -batch -cmd "$3" "$4" -init "$5"
+  ' _ "$demo_sql" "$DUCKDB" "$(quacktail_sql_extension_directory)" "$client_db" "${WORK}/client_init.sql" \
+    2>&1 | tee "$out"
+  duckdb_rc=${PIPESTATUS[0]}
+  set -o pipefail
+
+  if [[ "$duckdb_rc" -ne 0 ]]; then
+    echo "error: client demo failed (exit ${duckdb_rc})" >&2
     exit 1
   fi
 
-  print_duckdb_tables "$demo_out"
-
-  if ! grep -q "PASSED" "$demo_out" 2>/dev/null; then
+  if ! grep -q "PASSED" "$out" 2>/dev/null; then
     echo "error: expected PASSED row missing" >&2
     exit 1
   fi

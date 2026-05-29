@@ -21,12 +21,26 @@ fi
 mkdir -p "$WORK"
 
 ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
+CLIENT_STATE_DIR="/tmp/client-tailscale"
 
-write_client_demo_sql() {
-  cat >"$WORK/client_demo.sql" <<SQL
+write_client_init_sql() {
+  local authkey="${1:?authkey required}"
+  cat >"$WORK/client_init.sql" <<SQL
 SET extension_directory='/duckdb_extensions';
 LOAD quack;
 
+CALL tailscale_up(
+    hostname => '${CLIENT_HOST}',
+    control_url => '${CONTROL_URL}',
+    authkey => '${authkey}',
+    state_dir => '${CLIENT_STATE_DIR}',
+    ephemeral => true
+);
+SQL
+}
+
+write_client_demo_sql() {
+  cat >"$WORK/client_demo.sql" <<SQL
 SELECT * FROM quack_discover();
 
 SELECT q AS probe_result
@@ -60,10 +74,11 @@ SQL
 }
 
 if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
+  AUTHKEY="$(cat "$WORK/authkey")"
   if [[ ! -f "$WORK/client_demo.sql" ]] || ! grep -q 'quack_discover' "$WORK/client_demo.sql" 2>/dev/null; then
-    [[ -f "$WORK/client_init.sql" ]] || { echo "error: missing $WORK/client_init.sql" >&2; exit 1; }
+    write_client_init_sql "$AUTHKEY"
     write_client_demo_sql
-    echo "✓ demo client SQL ready — ${ATTACH_URI}"
+    echo "✓ client SQL ready — ${ATTACH_URI}"
   fi
   exit 0
 fi
@@ -208,7 +223,7 @@ CALL tailscale_up(
     hostname => '${CLIENT_HOST}',
     control_url => '${CONTROL_URL}',
     authkey => '${AUTHKEY}',
-    state_dir => '/work/client-tailscale',
+    state_dir => '${CLIENT_STATE_DIR}',
     ephemeral => true
 );
 SQL
