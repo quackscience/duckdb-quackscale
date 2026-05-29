@@ -507,6 +507,14 @@ SQL
   fi
 }
 
+# True for loopback Quack URIs only (plain HTTP; no DISABLE_SSL).
+headscale_ci_quack_uri_is_local() {
+  case "$1" in
+    quack:localhost | quack:localhost:* | quack:127.0.0.1 | quack:127.0.0.1:* | quack:'[::1]' | quack:'[::1]':*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Client ATTACH block per docs (secret + TYPE quack; DISABLE_SSL only for remote plain HTTP).
 headscale_ci_sql_quack_client_attach() {
   local attach_uri="$1"
@@ -520,7 +528,7 @@ CREATE SECRET (
 );
 
 SQL
-  if [[ "$attach_uri" == quack:localhost* || "$attach_uri" == quack:127.0.0.1* || "$attach_uri" == quack:[::1]* ]]; then
+  if headscale_ci_quack_uri_is_local "$attach_uri"; then
     cat <<SQL
 ATTACH '${attach_uri}' AS remote (TYPE quack);
 SQL

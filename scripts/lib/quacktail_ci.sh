@@ -106,12 +106,13 @@ quacktail_ci_run_client() {
   local duckdb_bin="${1:?duckdb binary path}"
   local work_dir="${2:?work directory}"
   local port="${3:-9494}"
+  local timeout_sec="${4:-${E2E_CLIENT_TIMEOUT_SEC:-120}}"
 
   quacktail_ci_require_docker
   docker rm -f "$QUACKTAIL_CLIENT_CONTAINER" >/dev/null 2>&1 || true
 
-  echo "Running QuackTail client container ..."
-  docker run --name "$QUACKTAIL_CLIENT_CONTAINER" \
+  echo "Running QuackTail client container (timeout ${timeout_sec}s) ..."
+  timeout "$timeout_sec" docker run --name "$QUACKTAIL_CLIENT_CONTAINER" \
     --network "$HEADSCALE_DOCKER_NETWORK" \
     -v "${work_dir}:/work" \
     -v "${duckdb_bin}:/usr/local/bin/duckdb:ro" \

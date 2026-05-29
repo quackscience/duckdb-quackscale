@@ -12,6 +12,7 @@ QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-e2e-shared-token}"
 SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
+CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-120}"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
 mkdir -p "$WORK"
@@ -138,9 +139,14 @@ SQL
 
 echo "=== Running QuackTail client container ($CLIENT_HOST) ==="
 set +e
-quacktail_ci_run_client "$DUCKDB" "$WORK" "$QUACK_PORT" 2>&1 | tee "$CLIENT_LOG"
+quacktail_ci_run_client "$DUCKDB" "$WORK" "$QUACK_PORT" "$CLIENT_TIMEOUT" 2>&1 | tee "$CLIENT_LOG"
 CLIENT_RC=${PIPESTATUS[0]}
 set -e
+
+if (( CLIENT_RC == 124 )); then
+  echo "error: client container timed out after ${CLIENT_TIMEOUT}s (check ATTACH URI and DISABLE_SSL)" >&2
+  CLIENT_RC=124
+fi
 
 CLIENT_OUT="$(cat "$CLIENT_LOG")"
 if (( CLIENT_RC != 0 )); then
