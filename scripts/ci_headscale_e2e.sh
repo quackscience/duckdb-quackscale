@@ -42,6 +42,39 @@ e2e_run_duckdb() {
   fi
 }
 
+e2e_wait_for_quack_server() {
+  local attempt=0
+  echo "Waiting for Quack server process (runner is not on the tailnet; checking server log) ..."
+  while (( attempt < 60 )); do
+    attempt=$((attempt + 1))
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "error: server DuckDB exited early" >&2
+      tail -80 "$SERVER_LOG" >&2 || true
+      headscale_ci_logs
+      exit 1
+    fi
+    if grep -q "Failed to bind DuckDB Quack RPC server" "$SERVER_LOG" 2>/dev/null; then
+      echo "error: quack_serve failed to bind" >&2
+      tail -80 "$SERVER_LOG" >&2 || true
+      headscale_ci_logs
+      exit 1
+    fi
+    if grep -qE "listen_uri|listening on port|HTTP URL" "$SERVER_LOG" 2>/dev/null; then
+      echo "Quack server started (see streamed server output above)"
+      return 0
+    fi
+    if (( attempt >= 15 )) && grep -q "CALL quack_serve" "$SERVER_LOG" 2>/dev/null; then
+      echo "Quack server process still running after quack_serve (no bind error detected)"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "error: timed out waiting for Quack server to start" >&2
+  tail -80 "$SERVER_LOG" >&2 || true
+  headscale_ci_logs
+  exit 1
+}
+
 e2e_dump_logs() {
   if [[ -z "${WORK:-}" ]]; then
     return 0
@@ -143,6 +176,10 @@ else
   headscale_ci_logs
   exit 1
 fi
+SERVER_DNS="$(headscale_ci_tailnet_fqdn "$SERVER_HOST")"
+SERVER_QUACK_URI="$(headscale_ci_quack_client_uri "$SERVER_HOST" "$QUACK_PORT")"
+echo "Server MagicDNS name: ${SERVER_DNS}"
+echo "Client Quack URI: ${SERVER_QUACK_URI}"
 
 {
   cat <<SQL
@@ -152,9 +189,9 @@ SQL
   headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
   cat <<SQL
 
--- Headscale CI has magic_dns disabled; bind Quack on the tailnet IP, not the hostname.
+-- Listen on all interfaces; clients reach the server via tailnet IP or MagicDNS.
 CALL quack_serve(
-    'quack:${SERVER_IP}:${QUACK_PORT}',
+    'quack:0.0.0.0:${QUACK_PORT}',
     allow_other_hostname => true,
     token => quack_token()
 );
@@ -169,16 +206,8 @@ python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/serv
 SERVER_PID=$!
 
 sleep 2
-kill -0 "$SERVER_PID" || {
-  echo "error: server process exited early" >&2
-  tail -80 "$SERVER_LOG" >&2 || true
-  headscale_ci_logs
-  exit 1
-}
-
-echo "Waiting for Quack listener on ${SERVER_IP}:${QUACK_PORT} ..."
-headscale_ci_wait_tcp "$SERVER_IP" "$QUACK_PORT"
-echo "Quack listener is reachable on ${SERVER_IP}:${QUACK_PORT}"
+e2e_wait_for_quack_server
+echo "Clients will connect via MagicDNS: ${SERVER_QUACK_URI}"
 
 {
   cat <<SQL
@@ -191,7 +220,7 @@ SQL
 CREATE SECRET (
     TYPE quack,
     TOKEN '${QUACK_TOKEN}',
-    SCOPE 'quack:${SERVER_IP}:${QUACK_PORT}'
+    SCOPE '${SERVER_QUACK_URI}'
 );
 
 .mode csv
@@ -200,7 +229,7 @@ CREATE SECRET (
 CREATE TEMP TABLE _discover AS SELECT * FROM quack_discover();
 SELECT 'discover_count', COUNT(*)::VARCHAR FROM _discover;
 
-ATTACH 'quack:${SERVER_IP}:${QUACK_PORT}' AS remote (
+ATTACH '${SERVER_QUACK_URI}' AS remote (
     TYPE quack,
     DISABLE_SSL true
 );

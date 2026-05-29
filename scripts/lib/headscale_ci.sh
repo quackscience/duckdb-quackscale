@@ -13,6 +13,7 @@ HEADSCALE_DOCKER_NETWORK="${HEADSCALE_DOCKER_NETWORK:-quacktail-ci}"
 HEADSCALE_HOST="${HEADSCALE_HOST:-headscale}"
 HEADSCALE_CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://${HEADSCALE_HOST}:8080}"
 HEADSCALE_CI_USER="${HEADSCALE_CI_USER:-quackscale-ci}"
+HEADSCALE_MAGICDNS_BASE_DOMAIN="${HEADSCALE_MAGICDNS_BASE_DOMAIN:-quackscale-ci.test}"
 HEADSCALE_CONFIG_DIR="${HEADSCALE_CONFIG_DIR:-${HEADSCALE_CI_ROOT:-.}/test/headscale}"
 TAILSCALE_IMAGE="${TAILSCALE_IMAGE:-tailscale/tailscale:stable}"
 
@@ -224,7 +225,7 @@ headscale_ci_verify_tailscale_client() {
     -v "$state_dir:/var/lib/tailscale" \
     -e TS_AUTHKEY="$authkey" \
     -e TS_STATE_DIR=/var/lib/tailscale \
-    -e "TS_EXTRA_ARGS=--login-server=${HEADSCALE_CONTROL_URL} --hostname=${hostname} --reset --accept-routes" \
+    -e "TS_EXTRA_ARGS=--login-server=${HEADSCALE_CONTROL_URL} --hostname=${hostname} --reset --accept-routes --accept-dns" \
     "$TAILSCALE_IMAGE" >/dev/null
 
   set +e
@@ -392,4 +393,15 @@ CALL tailscale_up(
     ephemeral => true
 );
 SQL
+}
+
+headscale_ci_tailnet_fqdn() {
+  local hostname="${1:?hostname required}"
+  echo "${hostname}.${HEADSCALE_MAGICDNS_BASE_DOMAIN}"
+}
+
+headscale_ci_quack_client_uri() {
+  local hostname="$1"
+  local port="${2:-9494}"
+  echo "quack:$(headscale_ci_tailnet_fqdn "$hostname"):${port}"
 }

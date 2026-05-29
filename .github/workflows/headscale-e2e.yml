@@ -13,6 +13,7 @@ on:
 env:
   HEADSCALE_HOST: headscale
   HEADSCALE_CONTROL_URL: http://headscale:8080
+  HEADSCALE_MAGICDNS_BASE_DOMAIN: quackscale-ci.test
 
 jobs:
   quacktail-e2e:

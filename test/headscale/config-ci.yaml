@@ -1,4 +1,4 @@
-# CI config — clients reach Headscale at http://headscale:8080 (Docker network alias).
+# CI config — control plane at http://headscale:8080; MagicDNS for tailnet peer hostnames.
 
 server_url: http://headscale:8080
 listen_addr: 0.0.0.0:8080
@@ -37,10 +37,13 @@ policy:
   path: /etc/headscale/policy.hujson
 
 dns:
-  magic_dns: false
-  override_local_dns: false
+  magic_dns: true
+  base_domain: quackscale-ci.test
+  override_local_dns: true
   nameservers:
-    global: []
+    global:
+      - 1.1.1.1
+      - 1.0.0.1
 
 logtail:
   enabled: false
