@@ -16,6 +16,9 @@ ARG GITHUB_REPO
 ARG QUACKTAIL_RELEASE_TAG
 
 ENV DEBIAN_FRONTEND=noninteractive
+# stage-1 always COPY --from=builder /out/ — create it even when downloading a release.
+RUN mkdir -p /out
+
 RUN if [ "$BUILD_FROM_SOURCE" = "1" ]; then \
       apt-get update \
       && apt-get install -y --no-install-recommends bash ca-certificates curl git golang-go \
@@ -29,7 +32,6 @@ COPY . /src/
 RUN if [ "$BUILD_FROM_SOURCE" = "1" ]; then \
       git submodule update --init --recursive \
       && GEN=ninja make release \
-      && install -d /out \
       && install -m755 build/release/duckdb /out/duckdb \
       && cp -a build/release/extension/quackscale /out/quackscale-ext 2>/dev/null || true; \
     fi
