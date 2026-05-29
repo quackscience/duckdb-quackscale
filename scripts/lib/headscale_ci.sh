@@ -453,7 +453,7 @@ headscale_ci_quack_uri_local() {
   echo "quack:127.0.0.1"
 }
 
-# Client ATTACH URI — MagicDNS FQDN (Tailscale/Headscale). Set E2E_QUACK_ATTACH_HOST=ip for tailnet IP.
+# Client ATTACH URI — MagicDNS on the tailnet (Tailscale Serve exposes local Quack).
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
@@ -470,48 +470,16 @@ headscale_ci_e2e_quack_secret_scope() {
   headscale_ci_e2e_quack_attach_uri "$@"
 }
 
-# Server: quack_uri() after tailscale_up (see docs/PLAN.md). Override with E2E_QUACK_SERVE_URI=0.0.0.0.
+# Server: Quack on loopback, then Tailscale Serve forwards tailnet:port → 127.0.0.1:port.
 headscale_ci_sql_quack_serve() {
   local port="${1:-9494}"
-  local mode="${E2E_QUACK_SERVE_URI:-tailnet}"
-  if [[ "$mode" == "tailnet" ]]; then
-    cat <<SQL
+  cat <<SQL
 CALL quack_serve(
-    quack_uri(),
-    allow_other_hostname => true,
+    'quack:127.0.0.1:${port}',
     token => quack_token()
 );
+CALL tailscale_serve_local(port => ${port});
 SQL
-    return 0
-  fi
-  local bind_host="${mode}"
-  if [[ "$bind_host" == "localhost" ]]; then
-    bind_host="127.0.0.1"
-  fi
-  if [[ "$bind_host" == "0.0.0.0" || "$bind_host" == "tailnet" ]]; then
-    cat <<SQL
-CALL quack_serve(
-    'quack:0.0.0.0:${port}',
-    allow_other_hostname => true,
-    token => quack_token()
-);
-SQL
-  elif [[ "$bind_host" == "127.0.0.1" || "$bind_host" == "::1" ]]; then
-    cat <<SQL
-CALL quack_serve(
-    'quack:${bind_host}',
-    token => quack_token()
-);
-SQL
-  else
-    cat <<SQL
-CALL quack_serve(
-    'quack:${bind_host}:${port}',
-    allow_other_hostname => true,
-    token => quack_token()
-);
-SQL
-  fi
 }
 
 # True for loopback Quack URIs only (plain HTTP; no DISABLE_SSL).

@@ -56,6 +56,10 @@ public:
 	TailscaleLoginStatus LoginStatus() const;
 	void Shutdown();
 
+	//! Tailscale Serve: expose listen_port on the tailnet, TCP-forward to 127.0.0.1:local_port.
+	void ServeLocalhostTCP(idx_t listen_port, idx_t local_port);
+	void ClearServe();
+
 	string PrimaryTailnetIP() const;
 	string FormatQuackURI(const string &host, idx_t port) const;
 	string QuackListenURI(idx_t port = QUACKSCALE_DEFAULT_QUACK_PORT) const;

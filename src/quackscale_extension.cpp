@@ -247,6 +247,55 @@ static void QuackscaleLoginStatusFunction(ClientContext &context, TableFunctionI
 	bind.finished = true;
 }
 
+struct QuackscaleServeLocalBindData : public TableFunctionData {
+	idx_t listen_port = QUACKSCALE_DEFAULT_QUACK_PORT;
+	idx_t local_port = QUACKSCALE_DEFAULT_QUACK_PORT;
+	bool finished = false;
+};
+
+static unique_ptr<FunctionData> QuackscaleServeLocalBind(ClientContext &context, TableFunctionBindInput &input,
+                                                         vector<LogicalType> &return_types, vector<string> &names) {
+	auto bind = make_uniq<QuackscaleServeLocalBindData>();
+	auto port_it = input.named_parameters.find("port");
+	if (port_it != input.named_parameters.end()) {
+		auto port = port_it->second.GetValue<int64_t>();
+		if (port <= 0 || port > 65535) {
+			throw InvalidInputException("tailscale_serve_local port must be between 1 and 65535");
+		}
+		bind->listen_port = NumericCast<idx_t>(port);
+	}
+	auto local_it = input.named_parameters.find("local_port");
+	if (local_it != input.named_parameters.end()) {
+		auto port = local_it->second.GetValue<int64_t>();
+		if (port <= 0 || port > 65535) {
+			throw InvalidInputException("tailscale_serve_local local_port must be between 1 and 65535");
+		}
+		bind->local_port = NumericCast<idx_t>(port);
+	} else {
+		bind->local_port = bind->listen_port;
+	}
+
+	return_types = {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR};
+	names = {"listen_port", "local_port", "local_forward"};
+	return std::move(bind);
+}
+
+static void QuackscaleServeLocalFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &bind = data_p.bind_data->CastNoConst<QuackscaleServeLocalBindData>();
+	if (bind.finished) {
+		return;
+	}
+
+	TailscaleBridge::Get().ServeLocalhostTCP(bind.listen_port, bind.local_port);
+	auto forward = StringUtil::Format("127.0.0.1:%d", bind.local_port);
+
+	output.SetCardinality(1);
+	output.SetValue(0, 0, Value::INTEGER(NumericCast<int32_t>(bind.listen_port)));
+	output.SetValue(1, 0, Value::INTEGER(NumericCast<int32_t>(bind.local_port)));
+	output.SetValue(2, 0, forward);
+	bind.finished = true;
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction up_function("tailscale_up", {}, QuackscaleUpFunction, QuackscaleUpBind);
 	RegisterAuthParameters(up_function);
@@ -265,6 +314,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction discover_function("quack_discover", {}, QuackscaleDiscoverFunction, QuackscaleDiscoverBind);
 	discover_function.named_parameters["port"] = LogicalType::BIGINT;
 	loader.RegisterFunction(discover_function);
+
+	TableFunction serve_local_function("tailscale_serve_local", {}, QuackscaleServeLocalFunction,
+	                                   QuackscaleServeLocalBind);
+	serve_local_function.named_parameters["port"] = LogicalType::BIGINT;
+	serve_local_function.named_parameters["local_port"] = LogicalType::BIGINT;
+	loader.RegisterFunction(serve_local_function);
 
 	loader.RegisterFunction(ScalarFunction("quack_uri", {}, LogicalType::VARCHAR, QuackscaleQuackUriFunction));
 	loader.RegisterFunction(ScalarFunction("quack_token", {}, LogicalType::VARCHAR, QuackTokenFunction));

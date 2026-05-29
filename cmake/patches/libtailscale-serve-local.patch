@@ -1,0 +1,94 @@
+diff --git a/tailscale.c b/tailscale.c
+index be18085..c78399c 100644
+--- a/tailscale.c
++++ b/tailscale.c
+@@ -25,6 +25,8 @@ extern int TsnetListen(int sd, char* net, char* addr, int* listenerOut);
+ extern int TsnetAccept(int ld, int* connOut);
+ extern int TsnetLoopback(int sd, char* addrOut, size_t addrLen, char* proxyOut, char* localOut);
+ extern int TsnetEnableFunnelToLocalhostPlaintextHttp1(int sd, int localhostPort);
++extern int TsnetServeLocalhostTCP(int sd, int listenPort, int localPort);
++extern int TsnetClearServe(int sd);
+ 
+ tailscale tailscale_new() {
+ 	return TsnetNewServer();
+@@ -92,3 +94,11 @@ int tailscale_errmsg(tailscale sd, char* buf, size_t buflen) {
+ int tailscale_enable_funnel_to_localhost_plaintext_http1(tailscale sd, int localhostPort) {
+ 	return TsnetEnableFunnelToLocalhostPlaintextHttp1(sd, localhostPort);
+ }
++
++int tailscale_serve_localhost_tcp(tailscale sd, int listen_port, int local_port) {
++	return TsnetServeLocalhostTCP(sd, listen_port, local_port);
++}
++
++int tailscale_clear_serve(tailscale sd) {
++	return TsnetClearServe(sd);
++}
+diff --git a/tailscale.go b/tailscale.go
+index 2238212..4a114e2 100644
+--- a/tailscale.go
++++ b/tailscale.go
+@@ -621,3 +621,44 @@ func TsnetEnableFunnelToLocalhostPlaintextHttp1(sd C.int, localhostPort C.int) C
+ 
+ 	return 0
+ }
++
++//export TsnetServeLocalhostTCP
++func TsnetServeLocalhostTCP(sd C.int, listenPort C.int, localPort C.int) C.int {
++	s := getServer(sd)
++	if s == nil {
++		return C.EBADF
++	}
++	if listenPort <= 0 || listenPort > 65535 || localPort <= 0 || localPort > 65535 {
++		return s.recErr(fmt.Errorf("libtailscale: invalid port"))
++	}
++
++	ctx := context.Background()
++	lc, err := s.s.LocalClient()
++	if err != nil {
++		return s.recErr(err)
++	}
++
++	tcpForward := fmt.Sprintf("127.0.0.1:%d", localPort)
++	sc := &ipn.ServeConfig{
++		TCP: map[uint16]*ipn.TCPPortHandler{
++			uint16(listenPort): {
++				TCPForward: tcpForward,
++			},
++		},
++	}
++	return s.recErr(lc.SetServeConfig(ctx, sc))
++}
++
++//export TsnetClearServe
++func TsnetClearServe(sd C.int) C.int {
++	s := getServer(sd)
++	if s == nil {
++		return C.EBADF
++	}
++	ctx := context.Background()
++	lc, err := s.s.LocalClient()
++	if err != nil {
++		return s.recErr(err)
++	}
++	return s.recErr(lc.SetServeConfig(ctx, &ipn.ServeConfig{}))
++}
+diff --git a/tailscale.h b/tailscale.h
+index 4531f06..d147122 100644
+--- a/tailscale.h
++++ b/tailscale.h
+@@ -191,6 +191,15 @@ extern int tailscale_loopback(tailscale sd, char* addr_out, size_t addrlen, char
+ // 	-1    - other error, details printed to the tsnet logger
+ extern int tailscale_enable_funnel_to_localhost_plaintext_http1(tailscale sd, int localhostPort);
+ 
++// tailscale_serve_localhost_tcp exposes listen_port on the tailnet and forwards
++// raw TCP to 127.0.0.1:local_port (Tailscale Serve). Use with a local service
++// such as Quack on loopback; remote clients use the node's MagicDNS name or
++// tailnet IP on listen_port.
++extern int tailscale_serve_localhost_tcp(tailscale sd, int listen_port, int local_port);
++
++// tailscale_clear_serve removes Tailscale Serve port forwards for this node.
++extern int tailscale_clear_serve(tailscale sd);
++
+ // tailscale_errmsg writes the details of the last error to buf.
+ // 
+ // After returning, buf is always NUL-terminated.

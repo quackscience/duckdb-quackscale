@@ -1,34 +1,25 @@
--- QuackTail on a self-hosted Headscale control plane
--- https://github.com/juanfont/headscale
+-- QuackTail on Headscale — Quack on loopback, Tailscale Serve exposes it on the tailnet.
 --
--- Headscale speaks the Tailscale control protocol; QuackScale uses the same
--- `control_url` + preauth key flow as `tailscale up --login-server`.
---
--- 1) On the Headscale server (or admin host):
---      headscale users create myuser
---      headscale preauthkeys create --user <USER_ID> --reusable --expiration 24h
---
--- 2) Export the key and your Headscale URL (must match server_url in config):
---      export HEADSCALE_URL='http://headscale.example.com:8080'
---      export HEADSCALE_PREAUTH_KEY='<key from headscale>'
---      export QUACK_TAILNET_TOKEN='shared-quack-secret'
+-- 1) headscale preauth key + control URL (see examples in repo docs)
+-- 2) export QUACK_TAILNET_TOKEN='shared-quack-secret'
 
 LOAD quack;
-LOAD quackscale;
 
 CALL tailscale_up(
     hostname => 'analytics-duck-1',
-    control_url => 'https://headscale.example.com',  -- same as Headscale server_url
+    control_url => 'http://headscale.example.com:8080',
     authkey => 'YOUR_HEADSCALE_PREAUTH_KEY',
-    state_dir => '~/.local/share/duckdb/quackscale-headscale'
+    state_dir => '/var/lib/duckdb/quackscale-headscale',
+    ephemeral => true
 );
 
+-- Quack listens locally; tailscale_serve_local publishes port 9494 on the tailnet.
 CALL quack_serve(
-    'quack:0.0.0.0:9494',
-    allow_other_hostname => true,
+    'quack:127.0.0.1:9494',
     token => quack_token()
 );
+CALL tailscale_serve_local(port => 9494);
 
 CALL quack_discover();
 
--- Clients: ATTACH quack:<hostname>.<your-base-domain>:9494 (or tailnet IP); DISABLE_SSL true for http-only labs
+-- Clients: ATTACH quack:<hostname>.<your-base-domain>:9494 (DISABLE_SSL true for plain HTTP)

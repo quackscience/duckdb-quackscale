@@ -18,7 +18,6 @@ set(EXTENSION_SOURCES src/quackscale_extension.cpp src/tailscale_bridge.cpp src/
 
 if(QUACKSCALE_WITH_TAILSCALE)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Libtailscale.cmake)
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtailscale)
 endif()
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

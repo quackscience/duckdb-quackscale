@@ -77,13 +77,14 @@ quacktail_ci_wait_server() {
       return 1
     fi
     if docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | grep -q "listen_url"; then
-      if [[ -n "$server_ip" ]] && quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "$server_ip"; then
-        echo "Quack server is ready on tailnet (attempt ${attempt})"
-        return 0
+      if docker logs "$QUACKTAIL_SERVER_CONTAINER" 2>&1 | grep -qE "local_forward|127\.0\.0\.1:${port}"; then
+        if [[ -n "$server_ip" ]] && quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "$server_ip"; then
+          echo "Quack reachable on tailnet ${server_ip}:${port} (attempt ${attempt})"
+          return 0
+        fi
       fi
-      if [[ -z "$server_ip" ]] && quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port"; then
-        echo "Quack server is ready (attempt ${attempt})"
-        return 0
+      if quacktail_ci_container_http_open "$QUACKTAIL_SERVER_CONTAINER" "$port" "127.0.0.1"; then
+        echo "Quack listening locally; waiting for tailscale serve on ${server_ip:-tailnet} ..."
       fi
     fi
     if (( attempt % 5 == 0 )); then

@@ -54,7 +54,7 @@ fi
 
 echo "Using DuckDB: $DUCKDB"
 echo "E2e work directory: $WORK"
-echo "E2e: Headscale tailnet (serve quack_uri(), ATTACH via MagicDNS)"
+echo "E2e: Quack on loopback + tailscale_serve_local → tailnet ATTACH"
 
 quacktail_ci_build_image "$ROOT"
 

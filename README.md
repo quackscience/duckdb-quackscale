@@ -89,12 +89,12 @@ CALL tailscale_up(
     state_dir => '~/.local/share/duckdb/quackscale'
 );
 
--- 2) Serve Quack on the tailnet (requires allow_other_hostname for non-local bind)
+-- 2) Quack on loopback; Tailscale Serve exposes port 9494 on the tailnet
 CALL quack_serve(
-    'quack:0.0.0.0:9494',
-    allow_other_hostname => true,
+    'quack:127.0.0.1:9494',
     token => quack_token()
 );
+CALL tailscale_serve_local(port => 9494);
 
 -- 3) See what clients should connect to
 CALL quack_discover();
@@ -177,7 +177,8 @@ Load with `LOAD quackscale;`. Use **`CALL`** for table functions (same style as 
 
 | Function | Description |
 |----------|-------------|
-| `quack_uri()` | Client-facing `quack:<host>:9494` for discovery/ATTACH (bind with `quack:0.0.0.0:9494`) |
+| `quack_uri()` | Client-facing `quack:<host>:9494` for discovery/ATTACH |
+| `CALL tailscale_serve_local(port => 9494)` | Tailscale Serve: tailnet TCP → `127.0.0.1:9494` (run after local `quack_serve`) |
 | `quack_token()` | Shared Quack token from `QUACK_TAILNET_TOKEN` / `QUACK_TOKEN` env |
 | `CALL quack_discover()` | All `quack:` URIs this node advertises (`magicdns` / `tailnet_ip`) |
 
@@ -195,7 +196,7 @@ SQL unit tests do not require a live tailnet or `QUACK_TAILNET_TOKEN`.
 
 QuackScale is not published to the DuckDB community extension repo yet. **GitHub releases** ship a linux `duckdb` binary with quackscale embedded ([`.github/workflows/Release.yml`](.github/workflows/Release.yml), triggered on **Release published**).
 
-Headscale e2e ([`.github/workflows/headscale-e2e.yml`](.github/workflows/headscale-e2e.yml)) is **manual only** — it downloads the latest release asset and runs [`scripts/ci_headscale_e2e.sh`](scripts/ci_headscale_e2e.sh). See [test/e2e/README.md](test/e2e/README.md).
+Headscale e2e ([`.github/workflows/headscale-e2e.yml`](.github/workflows/headscale-e2e.yml)) is **manual only** — it builds quackscale from source (needs `tailscale_serve_local`) and runs [`scripts/ci_headscale_e2e.sh`](scripts/ci_headscale_e2e.sh). See [test/e2e/README.md](test/e2e/README.md).
 
 ## Based on
 

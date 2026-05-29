@@ -263,17 +263,46 @@ void TailscaleBridge::Shutdown() {
 	log_capture.Stop();
 	JoinLoginThread();
 #ifdef QUACKSCALE_WITH_TAILSCALE
-	if (handle < 0) {
-		return;
+	if (handle >= 0) {
+		tailscale_clear_serve(handle);
+		tailscale_close(handle);
+		handle = -1;
 	}
-	tailscale_close(handle);
-	handle = -1;
+#else
 #endif
 	running = false;
 	ips.clear();
 	login_state = "idle";
 	login_message.clear();
 	pending_login_url.clear();
+}
+
+void TailscaleBridge::ServeLocalhostTCP(idx_t listen_port, idx_t local_port) {
+	std::lock_guard<std::mutex> guard(g_tailscale_mutex);
+#ifdef QUACKSCALE_WITH_TAILSCALE
+	if (!running) {
+		throw InvalidInputException("tailscale_serve_local: call tailscale_up() first");
+	}
+	EnsureHandle();
+	if (listen_port == 0 || listen_port > 65535 || local_port == 0 || local_port > 65535) {
+		throw InvalidInputException("tailscale_serve_local: ports must be between 1 and 65535");
+	}
+	if (tailscale_serve_localhost_tcp(handle, static_cast<int>(listen_port), static_cast<int>(local_port)) != 0) {
+		throw IOException("tailscale_serve_local failed: %s", LastErrorMessage());
+	}
+#else
+	(void)listen_port;
+	(void)local_port;
+	throw NotImplementedException("QuackScale was built without libtailscale.");
+#endif
+}
+
+void TailscaleBridge::ClearServe() {
+#ifdef QUACKSCALE_WITH_TAILSCALE
+	if (handle >= 0) {
+		tailscale_clear_serve(handle);
+	}
+#endif
 }
 
 string TailscaleBridge::PrimaryTailnetIP() const {

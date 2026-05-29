@@ -111,9 +111,32 @@ if(NOT QUACKSCALE_GO_EXECUTABLE)
 endif()
 
 set(LIBTAILSCALE_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/libtailscale")
+set(LIBTAILSCALE_SOURCE_BUILD_DIR "${LIBTAILSCALE_BUILD_DIR}/src")
+set(LIBTAILSCALE_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libtailscale-serve-local.patch")
+set(LIBTAILSCALE_PATCH_STAMP "${LIBTAILSCALE_SOURCE_BUILD_DIR}/.quackscale-patched")
 set(LIBTAILSCALE_ARCHIVE "${LIBTAILSCALE_BUILD_DIR}/libtailscale.a")
 
+if(NOT EXISTS "${LIBTAILSCALE_PATCH_FILE}")
+    message(FATAL_ERROR "libtailscale patch not found at ${LIBTAILSCALE_PATCH_FILE}")
+endif()
+
 file(MAKE_DIRECTORY "${LIBTAILSCALE_BUILD_DIR}")
+
+add_custom_command(
+    OUTPUT "${LIBTAILSCALE_PATCH_STAMP}"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${LIBTAILSCALE_SOURCE_BUILD_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${LIBTAILSCALE_SOURCE_DIR}" "${LIBTAILSCALE_SOURCE_BUILD_DIR}"
+    COMMAND patch -p1 -N -d "${LIBTAILSCALE_SOURCE_BUILD_DIR}" < "${LIBTAILSCALE_PATCH_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${LIBTAILSCALE_PATCH_STAMP}"
+    DEPENDS
+        "${LIBTAILSCALE_PATCH_FILE}"
+        "${LIBTAILSCALE_SOURCE_DIR}/tailscale.go"
+        "${LIBTAILSCALE_SOURCE_DIR}/tailscale.c"
+        "${LIBTAILSCALE_SOURCE_DIR}/tailscale.h"
+        "${LIBTAILSCALE_SOURCE_DIR}/go.mod"
+    COMMENT "Preparing patched libtailscale sources (Tailscale Serve TCP forward)"
+    VERBATIM
+)
 
 set(_libtailscale_go_env "CGO_ENABLED=1")
 if(APPLE)
@@ -124,11 +147,9 @@ add_custom_command(
     OUTPUT "${LIBTAILSCALE_ARCHIVE}"
     COMMAND ${CMAKE_COMMAND} -E env ${_libtailscale_go_env}
             "${QUACKSCALE_GO_EXECUTABLE}" build -buildmode=c-archive -o "${LIBTAILSCALE_ARCHIVE}"
-    WORKING_DIRECTORY "${LIBTAILSCALE_SOURCE_DIR}"
+    WORKING_DIRECTORY "${LIBTAILSCALE_SOURCE_BUILD_DIR}"
     DEPENDS
-        "${LIBTAILSCALE_SOURCE_DIR}/tailscale.go"
-        "${LIBTAILSCALE_SOURCE_DIR}/tailscale.c"
-        "${LIBTAILSCALE_SOURCE_DIR}/go.mod"
+        "${LIBTAILSCALE_PATCH_STAMP}"
     COMMENT "Building libtailscale.a with Go ${QUACKSCALE_GO_VERSION}"
     VERBATIM
 )
@@ -136,4 +157,4 @@ add_custom_command(
 add_custom_target(libtailscale_archive DEPENDS "${LIBTAILSCALE_ARCHIVE}")
 
 set(QUACKSCALE_LIBTAILSCALE_ARCHIVE "${LIBTAILSCALE_ARCHIVE}")
-set(QUACKSCALE_LIBTAILSCALE_INCLUDE "${LIBTAILSCALE_SOURCE_DIR}")
+set(QUACKSCALE_LIBTAILSCALE_INCLUDE "${LIBTAILSCALE_SOURCE_BUILD_DIR}")
