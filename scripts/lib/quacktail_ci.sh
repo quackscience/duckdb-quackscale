@@ -120,17 +120,23 @@ quacktail_ci_run_client() {
   quacktail_ci_require_docker
   docker rm -f "$QUACKTAIL_CLIENT_CONTAINER" >/dev/null 2>&1 || true
 
+  local server_host="${E2E_SERVER_HOST:-quacktail-server}"
+  local server_ip="${E2E_SERVER_IP:?E2E_SERVER_IP must be set}"
+
   echo "Running QuackTail client container (timeout ${timeout_sec}s) ..."
+  echo "Client /etc/hosts: ${server_host} -> ${server_ip}"
   timeout "$timeout_sec" docker run --name "$QUACKTAIL_CLIENT_CONTAINER" \
     --cap-add=NET_ADMIN \
     --device=/dev/net/tun \
     --network "$HEADSCALE_DOCKER_NETWORK" \
+    --add-host "${server_host}:${server_ip}" \
     -v "${work_dir}:/work" \
     -v "${duckdb_bin}:/usr/local/bin/duckdb:ro" \
     -e QUACKTAIL_ROLE=client \
     -e QUACKTAIL_WORK=/work \
     -e "QUACK_PORT=${port}" \
-    -e "E2E_SERVER_IP=${E2E_SERVER_IP:?E2E_SERVER_IP must be set}" \
+    -e "E2E_SERVER_IP=${server_ip}" \
+    -e "E2E_SERVER_HOST=${server_host}" \
     -e "E2E_CLIENT_MESH_WAIT_SEC=${E2E_CLIENT_MESH_WAIT_SEC:-3}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     "$QUACKTAIL_IMAGE"

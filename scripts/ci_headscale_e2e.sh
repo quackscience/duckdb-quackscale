@@ -150,6 +150,7 @@ SQL
 } >"$WORK/client_attach.sql"
 
 export E2E_SERVER_IP="$SERVER_IP"
+export E2E_SERVER_HOST="$SERVER_HOST"
 
 echo "=== Running QuackTail client ($CLIENT_HOST) ==="
 set +e
@@ -169,6 +170,13 @@ if (( CLIENT_RC != 0 )); then
   headscale_ci_logs
   exit 1
 fi
+
+echo "$CLIENT_OUT" | grep -q 'after_attach|ok' || {
+  echo "error: ATTACH did not complete (missing after_attach|ok)" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+}
+echo "ok: ATTACH completed"
 
 echo "$CLIENT_OUT" | grep -q 'cross-node tailnet TCP gate passed' || {
   echo "error: cross-node tailnet TCP gate did not pass" >&2

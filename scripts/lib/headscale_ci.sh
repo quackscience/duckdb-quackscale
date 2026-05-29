@@ -442,6 +442,12 @@ headscale_ci_quack_client_uri() {
   echo "quack:$(headscale_ci_tailnet_fqdn "$hostname"):${port}"
 }
 
+headscale_ci_quack_uri_for_hostname() {
+  local hostname="$1"
+  local port="${2:-9494}"
+  echo "quack:${hostname}:${port}"
+}
+
 # Quack URI helpers — see https://duckdb.org/docs/current/quack/overview
 headscale_ci_quack_uri_for_ip() {
   local ip="$1"
@@ -453,16 +459,17 @@ headscale_ci_quack_uri_local() {
   echo "quack:127.0.0.1"
 }
 
-# Client ATTACH URI — tailnet IP by default (tsnet has no accept-dns yet; MagicDNS needs E2E_QUACK_ATTACH_HOST=magicdns).
+# Client ATTACH URI — tailscale hostname + --add-host (default); ip or magicdns via env.
 headscale_ci_e2e_quack_attach_uri() {
   local server_ip="$1"
   local port="${2:-9494}"
   local server_host="${E2E_SERVER_HOST:-quacktail-server}"
-  if [[ "${E2E_QUACK_ATTACH_HOST:-ip}" == "magicdns" ]]; then
-    headscale_ci_quack_client_uri "$server_host" "$port"
-  else
-    headscale_ci_quack_uri_for_ip "$server_ip" "$port"
-  fi
+  case "${E2E_QUACK_ATTACH_HOST:-hostname}" in
+    ip) headscale_ci_quack_uri_for_ip "$server_ip" "$port" ;;
+    magicdns) headscale_ci_quack_client_uri "$server_host" "$port" ;;
+    hostname) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
+    *) headscale_ci_quack_uri_for_hostname "$server_host" "$port" ;;
+  esac
 }
 
 # Secret SCOPE must match the server URI (docs: SCOPE 'quack:localhost').
@@ -491,29 +498,33 @@ headscale_ci_quack_uri_is_local() {
   esac
 }
 
-# Client ATTACH block per docs (secret + TYPE quack; DISABLE_SSL only for remote plain HTTP).
+# Client ATTACH — explicit TOKEN (matches QUACK_AUTH); DISABLE_SSL for tailnet plain HTTP.
 headscale_ci_sql_quack_client_attach() {
   local attach_uri="$1"
   local token="$2"
   local secret_scope="$3"
   cat <<SQL
-CREATE SECRET (
-    TYPE quack,
-    TOKEN '${token}',
-    SCOPE '${secret_scope}'
-);
+SELECT 'before_attach|${attach_uri}';
 
 SQL
   if headscale_ci_quack_uri_is_local "$attach_uri"; then
     cat <<SQL
-ATTACH '${attach_uri}' AS remote (TYPE quack);
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    TOKEN '${token}'
+);
 SQL
   else
     cat <<SQL
 ATTACH '${attach_uri}' AS remote (
     TYPE quack,
+    TOKEN '${token}',
     DISABLE_SSL true
 );
 SQL
   fi
+  cat <<SQL
+
+SELECT 'after_attach|ok';
+SQL
 }

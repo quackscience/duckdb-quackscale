@@ -15,7 +15,7 @@ Server readiness curl (server → own tailnet IP) is **not** a cross-node check.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `E2E_QUACK_ATTACH_HOST` | `ip` | Client URI (`magicdns` when tsnet accepts tailnet DNS) |
+| `E2E_QUACK_ATTACH_HOST` | `hostname` | `hostname` = tailscale name + `--add-host`; `ip`; `magicdns` |
 | `E2E_TAILNET_MESH_WAIT_SEC` | `3` | Pause after server ready, before client container starts |
 | `E2E_CLIENT_MESH_WAIT_SEC` | `3` | Pause inside client after `tailscale_up`, before curl gate + ATTACH |
 | `E2E_CLIENT_TIMEOUT_SEC` | `30` | Hard limit for the client container |

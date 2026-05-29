@@ -58,6 +58,7 @@ run_client() {
   ensure_quack
   local client_db="${WORK}/client.duckdb"
   local server_ip="${E2E_SERVER_IP:?E2E_SERVER_IP required for client}"
+  local gate_host="${E2E_SERVER_HOST:-$server_ip}"
   local mesh_wait="${E2E_CLIENT_MESH_WAIT_SEC:-3}"
 
   if [[ ! -f "${WORK}/client_init.sql" || ! -f "${WORK}/client_attach.sql" ]]; then
@@ -72,12 +73,12 @@ run_client() {
 
   {
     sleep "$mesh_wait"
-    echo "=== tailnet TCP gate: curl http://${server_ip}:${PORT}/ (cross-node) ===" >&2
-    if ! quacktail_curl_tailnet_http "$server_ip" "$PORT"; then
-      echo "error: cross-node tailnet TCP gate failed (${server_ip}:${PORT})" >&2
+    echo "=== tailnet TCP gate: curl http://${gate_host}:${PORT}/ (cross-node) ===" >&2
+    if ! quacktail_curl_tailnet_http "$gate_host" "$PORT"; then
+      echo "error: cross-node tailnet TCP gate failed (${gate_host}:${PORT})" >&2
       exit 1
     fi
-    echo "ok: cross-node tailnet TCP gate passed (${server_ip}:${PORT})" >&2
+    echo "ok: cross-node tailnet TCP gate passed (${gate_host}:${PORT})" >&2
     cat "${WORK}/client_attach.sql"
   } | "$DUCKDB" "$client_db" -init "${WORK}/client_init.sql" -batch -echo
 }
