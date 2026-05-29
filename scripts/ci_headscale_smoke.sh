@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-test QuackScale against a local Headscale control server (Tailscale-compatible).
+# Smoke-test QuackTail against Headscale (built-in quackscale; no LOAD quackscale).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,26 +8,25 @@ HEADSCALE_CI_ROOT="$ROOT"
 # shellcheck source=scripts/lib/headscale_ci.sh
 source "$ROOT/scripts/lib/headscale_ci.sh"
 
-DATA_DIR="$(mktemp -d)"
 STATE_DIR="$(mktemp -d)"
 
 cleanup() {
   headscale_ci_stop
-  rm -rf "$DATA_DIR" "$STATE_DIR"
+  rm -rf "$STATE_DIR"
 }
 trap cleanup EXIT
 
 if [[ ! -x "$DUCKDB" ]]; then
-  echo "error: DuckDB not found at $DUCKDB (run: GEN=ninja make release)" >&2
+  echo "error: DuckDB not found at $DUCKDB" >&2
   exit 1
 fi
 
-headscale_ci_start "$DATA_DIR"
+headscale_ci_start
 AUTHKEY="$(headscale_ci_create_authkey)"
+headscale_ci_verify_tailscale_client "$AUTHKEY" "quackscale-smoke"
 
-echo "Joining Headscale tailnet from DuckDB (control_url=$HEADSCALE_CONTROL_URL)..."
-"$DUCKDB" <<SQL
-LOAD quackscale;
+echo "Joining Headscale from DuckDB (control_url=$HEADSCALE_CONTROL_URL) ..."
+"$DUCKDB" :memory: -batch -echo <<SQL
 CALL tailscale_up(
     hostname => 'quackscale-ci',
     control_url => '${HEADSCALE_CONTROL_URL}',
@@ -38,4 +37,4 @@ CALL tailscale_up(
 CALL tailscale_status();
 SQL
 
-echo "Headscale + QuackScale smoke test passed."
+echo "Headscale + QuackTail smoke test passed."

@@ -1,0 +1,7 @@
+# Headscale image for GitHub Actions service containers.
+# Config is baked in because GHA services start before checkout (no bind mounts).
+FROM headscale/headscale:0.28.0
+COPY config-ci.yaml /etc/headscale/config.yaml
+COPY policy.hujson /etc/headscale/policy.hujson
+EXPOSE 8080
+CMD ["serve"]

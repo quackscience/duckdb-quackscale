@@ -17,18 +17,26 @@ def main() -> int:
     duckdb, database, init_sql_path, log_path = sys.argv[1:5]
     init_sql = open(init_sql_path, encoding="utf-8").read()
 
-    logf = open(log_path, "w", encoding="utf-8")
+    logf = open(log_path, "a", encoding="utf-8")
     proc = subprocess.Popen(
         [duckdb, database],
         stdin=subprocess.PIPE,
-        stdout=logf,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         env=os.environ.copy(),
     )
     assert proc.stdin is not None
+    assert proc.stdout is not None
     proc.stdin.write(init_sql)
-    proc.stdin.flush()
+    proc.stdin.close()
+
+    def _stream_output() -> None:
+        for line in proc.stdout:
+            logf.write(line)
+            logf.flush()
+            sys.stderr.write(line)
+            sys.stderr.flush()
 
     def _terminate(_signum: int, _frame: object) -> None:
         if proc.poll() is None:
@@ -40,8 +48,13 @@ def main() -> int:
     keepalive = float(os.environ.get("E2E_SERVER_KEEPALIVE_SEC", "180"))
     deadline = time.time() + keepalive
     try:
+        import threading
+
+        reader = threading.Thread(target=_stream_output, daemon=True)
+        reader.start()
         while time.time() < deadline and proc.poll() is None:
             time.sleep(1)
+        reader.join(timeout=5)
     finally:
         if proc.poll() is None:
             proc.terminate()

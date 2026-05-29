@@ -1,4 +1,6 @@
 # Two-node QuackTail e2e over Headscale. Manual only — uses pre-built release binaries.
+# Headscale runs as a GitHub Actions service container (localhost:8080).
+# https://docs.github.com/en/actions/tutorials/use-containerized-services/create-redis-service-containers
 name: Headscale QuackTail e2e
 
 on:
@@ -10,28 +12,127 @@ on:
         default: latest
         type: string
 
-permissions:
-  contents: read
+env:
+  HEADSCALE_CI_IMAGE: ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+  HEADSCALE_USE_GHA_SERVICE: "1"
+  HEADSCALE_CONTROL_URL: http://127.0.0.1:8080
 
 jobs:
+  build-headscale-ci:
+    name: Build Headscale CI image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: test/headscale
+          file: test/headscale/Dockerfile.ci
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+            ghcr.io/${{ github.repository }}/headscale-ci:${{ github.sha }}
+
   quacktail-e2e:
     name: Headscale QuackTail e2e (linux)
+    needs: build-headscale-ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+
+    services:
+      headscale:
+        image: ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd "headscale health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 10s
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Headscale service
+        run: |
+          echo "HEADSCALE_CONTROL_URL=$HEADSCALE_CONTROL_URL"
+          curl -v "$HEADSCALE_CONTROL_URL/health"
+          chmod +x scripts/lib/headscale_ci.sh
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_wait_ready
+          AUTHKEY="$(headscale_ci_create_authkey)"
+          echo "authkey_len=${#AUTHKEY}"
+          headscale_ci_verify_tailscale_client "$AUTHKEY" "gha-headscale-smoke"
+          echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
+          chmod 600 "$RUNNER_TEMP/headscale-authkey"
+
       - name: Download QuackTail release binary
-        env:
-          QUACKTAIL_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           chmod +x scripts/ci_download_release_duckdb.sh
           eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
           echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
           "$DUCKDB" -version || "$DUCKDB" --version
+          echo "=== quackscale (built-in) ==="
+          "$DUCKDB" :memory: -csv -c \
+            "SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quackscale';"
+          echo "=== tailscale_status ==="
+          "$DUCKDB" :memory: -batch -echo -c "CALL tailscale_status();"
+
+      - name: Install quack extension
+        run: |
+          if ! "$DUCKDB" -c "LOAD quack; SELECT 1;"; then
+            echo "Installing quack from DuckDB core ..."
+            "$DUCKDB" -c "INSTALL quack FROM core; LOAD quack; SELECT 1;" \
+              || "$DUCKDB" -c "INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+          fi
+
+      - name: DuckDB tailscale_up smoke
+        run: |
+          AUTHKEY="$(cat "$RUNNER_TEMP/headscale-authkey")"
+          STATE="$RUNNER_TEMP/duckdb-tailscale-smoke"
+          rm -rf "$STATE"
+          mkdir -p "$STATE"
+          cat > "$RUNNER_TEMP/tailscale_smoke.sql" <<SQL
+          CALL tailscale_up(
+              hostname => 'gha-duckdb-smoke',
+              control_url => '${HEADSCALE_CONTROL_URL}',
+              authkey => '${AUTHKEY}',
+              state_dir => '${STATE}',
+              ephemeral => true
+          );
+          CALL tailscale_status();
+          SQL
+          "$DUCKDB" :memory: -batch -echo -f "$RUNNER_TEMP/tailscale_smoke.sql"
 
       - name: Run Headscale QuackTail e2e
+        env:
+          HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
+          SKIP_HEADSCALE_VERIFY: "1"
         run: |
-          chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh
+          chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh scripts/lib/run_e2e_server.py
           ./scripts/ci_headscale_e2e.sh
+
+      - name: Upload e2e logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headscale-e2e-logs
+          path: .e2e-work/
+          if-no-files-found: warn

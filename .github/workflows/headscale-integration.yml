@@ -1,5 +1,4 @@
-# Join a real Headscale control server (Tailscale-compatible) from QuackScale.
-# https://github.com/juanfont/headscale
+# Join QuackScale to Headscale (build from source on PR).
 name: Headscale integration
 
 on:
@@ -8,16 +7,65 @@ on:
     paths:
       - '.github/workflows/headscale-integration.yml'
       - 'scripts/ci_headscale_smoke.sh'
+      - 'scripts/lib/headscale_ci.sh'
       - 'test/headscale/**'
       - 'src/**'
       - 'cmake/**'
       - 'third_party/libtailscale/**'
 
+env:
+  HEADSCALE_CI_IMAGE: ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+  HEADSCALE_USE_GHA_SERVICE: "1"
+  HEADSCALE_CONTROL_URL: http://127.0.0.1:8080
+
 jobs:
+  build-headscale-ci:
+    name: Build Headscale CI image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: test/headscale
+          file: test/headscale/Dockerfile.ci
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+            ghcr.io/${{ github.repository }}/headscale-ci:${{ github.sha }}
+
   headscale-smoke:
     name: Headscale + QuackScale smoke
+    needs: build-headscale-ci
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+
+    services:
+      headscale:
+        image: ghcr.io/${{ github.repository }}/headscale-ci:0.28.0
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd "headscale health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 10s
 
     steps:
       - uses: actions/checkout@v4

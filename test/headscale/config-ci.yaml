@@ -31,7 +31,7 @@ database:
     write_ahead_log: true
 
 log:
-  level: warn
+  level: info
 
 policy:
   mode: file
