@@ -16,6 +16,7 @@ QUACK_PORT="${E2E_QUACK_PORT:-9494}"
 CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-120}"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
+SERVER_DUCKDB_PID_FILE=""
 mkdir -p "$WORK"
 HS_DATA="$WORK/headscale-data"
 SERVER_STATE="$WORK/server-tailscale"
@@ -43,17 +44,49 @@ e2e_run_duckdb() {
   fi
 }
 
+e2e_server_duckdb_pid() {
+  if [[ -n "${SERVER_DUCKDB_PID_FILE:-}" && -f "$SERVER_DUCKDB_PID_FILE" ]]; then
+    cat "$SERVER_DUCKDB_PID_FILE"
+    return 0
+  fi
+  return 1
+}
+
+e2e_assert_server_alive() {
+  local label="${1:-before client}"
+  local duckdb_pid=""
+  if ! duckdb_pid="$(e2e_server_duckdb_pid)"; then
+    echo "error: server DuckDB pid file missing ($label)" >&2
+    tail -80 "$SERVER_LOG" >&2 || true
+    return 1
+  fi
+  if ! kill -0 "$duckdb_pid" 2>/dev/null; then
+    echo "error: server DuckDB (pid $duckdb_pid) is not running ($label)" >&2
+    tail -80 "$SERVER_LOG" >&2 || true
+    return 1
+  fi
+  local wait_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
+  if [[ "$wait_host" == "tailnet" ]]; then
+    wait_host="${SERVER_IP:-127.0.0.1}"
+  fi
+  if ! headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
+    echo "error: Quack not reachable on ${wait_host}:${QUACK_PORT} ($label)" >&2
+    return 1
+  fi
+  return 0
+}
+
 e2e_wait_for_quack_server() {
-  local wait_host="${E2E_QUACK_ATTACH_HOST:-localhost}"
+  local wait_host="${E2E_QUACK_ATTACH_HOST:-127.0.0.1}"
   if [[ "$wait_host" == "tailnet" ]]; then
     wait_host="${SERVER_IP:?SERVER_IP required for tailnet wait}"
   fi
   local attempt=0
-  echo "Waiting for Quack HTTP on ${wait_host}:${QUACK_PORT} (quack_serve blocks the server DuckDB process) ..."
+  echo "Waiting for Quack on ${wait_host}:${QUACK_PORT} (server DuckDB must stay alive) ..."
   while (( attempt < 60 )); do
     attempt=$((attempt + 1))
-    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-      echo "error: server DuckDB exited early (quack_serve should block until killed)" >&2
+    if ! e2e_server_duckdb_pid >/dev/null 2>&1 || ! kill -0 "$(e2e_server_duckdb_pid)" 2>/dev/null; then
+      echo "error: server DuckDB exited before Quack was ready" >&2
       tail -80 "$SERVER_LOG" >&2 || true
       headscale_ci_logs
       exit 1
@@ -65,11 +98,11 @@ e2e_wait_for_quack_server() {
       exit 1
     fi
     if headscale_ci_tcp_reachable "$wait_host" "$QUACK_PORT"; then
-      echo "Quack is accepting TCP on ${wait_host}:${QUACK_PORT}"
+      echo "Quack is accepting TCP on ${wait_host}:${QUACK_PORT} (server pid $(e2e_server_duckdb_pid))"
       return 0
     fi
     if (( attempt % 5 == 0 )); then
-      echo "  attempt ${attempt} (server pid ${SERVER_PID}) ..."
+      echo "  attempt ${attempt} (server duckdb pid $(e2e_server_duckdb_pid 2>/dev/null || echo '?')) ..."
       tail -5 "$SERVER_LOG" 2>/dev/null || true
     fi
     sleep 2
@@ -93,7 +126,7 @@ e2e_dump_logs() {
   echo "::endgroup::"
   echo "::group::E2e client log"
   if [[ -f "${CLIENT_LOG:-}" ]]; then
-    cat "$CLIENT_LOG"
+    cat "$CLIENT_LOG" || true
   else
     echo "(no client log)"
   fi
@@ -111,7 +144,10 @@ e2e_dump_logs() {
 }
 
 cleanup() {
-  if [[ -n "${SERVER_PID:-}" ]]; then
+  if [[ -n "${SERVER_WRAPPER_PID:-}" ]]; then
+    kill "$SERVER_WRAPPER_PID" >/dev/null 2>&1 || true
+    wait "$SERVER_WRAPPER_PID" >/dev/null 2>&1 || true
+  elif [[ -n "${SERVER_PID:-}" ]]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
@@ -165,7 +201,8 @@ export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
   headscale_ci_sql_tailscale_up "$SERVER_HOST" "$SERVER_STATE" "$AUTHKEY"
   cat <<SQL
 
-CREATE TABLE e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
+CREATE TABLE IF NOT EXISTS e2e_payload (id INTEGER PRIMARY KEY, msg VARCHAR, source VARCHAR);
+DELETE FROM e2e_payload;
 INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
 
 LOAD quack;
@@ -180,9 +217,10 @@ echo "Client Quack ATTACH URI: ${SERVER_QUACK_URI}"
 echo "=== Starting Quack listener on server ==="
 echo "--- SQL: server_serve.sql ---"
 cat "$WORK/server_serve.sql"
-echo "--- DuckDB server output (streamed; quack_serve blocks) ---"
+SERVER_DUCKDB_PID_FILE="$SERVER_LOG.duckdb.pid"
+echo "--- DuckDB server output (streamed; session kept open for Quack) ---"
 python3 "$ROOT/scripts/lib/run_e2e_server.py" "$DUCKDB" "$SERVER_DB" "$WORK/server_serve.sql" "$SERVER_LOG" &
-SERVER_PID=$!
+SERVER_WRAPPER_PID=$!
 
 sleep 2
 e2e_wait_for_quack_server
@@ -198,6 +236,7 @@ else
 fi
 
 echo "Client will ATTACH: ${SERVER_QUACK_URI}"
+e2e_assert_server_alive "before client" || exit 1
 
 {
   cat <<SQL
@@ -252,20 +291,7 @@ if (( CLIENT_RC != 0 )); then
 fi
 
 echo "=== Result rows ==="
-echo "$CLIENT_OUT" | grep -E 'discover_count|row_count|client_msg|server_msg' || true
-
-assert_client_row() {
-  local pattern="$1"
-  local label="$2"
-  if echo "$CLIENT_OUT" | grep -q "$pattern"; then
-    echo "ok: $label"
-  else
-    echo "error: $label (expected to match: $pattern)" >&2
-    echo "full client output:" >&2
-    echo "$CLIENT_OUT" >&2
-    exit 1
-  fi
-}
+echo "$CLIENT_OUT" | grep -E 'discover_count|row_count|client_msg|server_msg|insert-from-client|seed-from-server' || true
 
 if echo "$CLIENT_OUT" | grep -qE 'discover_count\|(1|2)'; then
   echo "ok: client on tailnet (quack_discover returned endpoints)"
@@ -275,9 +301,27 @@ else
   echo "$CLIENT_OUT" >&2
   exit 1
 fi
-assert_client_row 'row_count|2' 'remote table has 2 rows'
-assert_client_row 'client_msg|insert-from-client' 'client INSERT visible'
-assert_client_row 'server_msg|seed-from-server' 'server seed visible'
+
+echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
+  echo "error: client INSERT row not found" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+}
+echo "ok: client INSERT visible"
+
+echo "$CLIENT_OUT" | grep -q 'seed-from-server' || {
+  echo "error: server seed row not found" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+}
+echo "ok: server seed visible"
+
+echo "$CLIENT_OUT" | grep -qE 'row_count\|2|│ 2 │|count_star\(\)\s*\│\s*2' || {
+  echo "error: expected 2 rows in remote.e2e_payload" >&2
+  echo "$CLIENT_OUT" >&2
+  exit 1
+}
+echo "ok: remote table has 2 rows"
 
 echo "=== Headscale nodes after e2e ==="
 headscale_ci_exec headscale nodes list || true

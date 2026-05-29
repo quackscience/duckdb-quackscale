@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run DuckDB server SQL; quack_serve blocks and keeps the process alive."""
+"""Run DuckDB server SQL and keep the session alive while Quack listens."""
 from __future__ import annotations
 
 import os
@@ -15,17 +15,28 @@ def main() -> int:
         return 2
 
     duckdb, database, init_sql_path, log_path = sys.argv[1:5]
+    init_sql = open(init_sql_path, encoding="utf-8").read()
+    pid_path = f"{log_path}.duckdb.pid"
 
     logf = open(log_path, "a", encoding="utf-8")
-    # quack_serve blocks until the session ends; -batch -echo -f runs through tailscale_up then serves.
+    # Interactive mode + open stdin: quack_serve may return in batch, but the REPL stays
+    # alive waiting for more input while the Quack HTTP listener keeps running.
     proc = subprocess.Popen(
-        [duckdb, database, "-batch", "-echo", "-f", init_sql_path],
+        [duckdb, database, "-echo"],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         env=os.environ.copy(),
     )
+    assert proc.stdin is not None
     assert proc.stdout is not None
+    with open(pid_path, "w", encoding="utf-8") as pidf:
+        pidf.write(str(proc.pid))
+    proc.stdin.write(init_sql)
+    if not init_sql.endswith("\n"):
+        proc.stdin.write("\n")
+    proc.stdin.flush()
 
     def _stream_output() -> None:
         for line in proc.stdout:
@@ -59,6 +70,10 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
         logf.close()
+        try:
+            os.remove(pid_path)
+        except OSError:
+            pass
 
     if proc.returncode not in (0, None, -signal.SIGTERM, -15):
         print(f"error: server DuckDB exited with code {proc.returncode}", file=sys.stderr)
