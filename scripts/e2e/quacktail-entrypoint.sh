@@ -276,7 +276,9 @@ run_client() {
       exit "$duckdb_rc"
     fi
     if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
-      break
+      if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" != "1" ]] || grep -q "LAKE_PASSED" "$out" 2>/dev/null; then
+        break
+      fi
     fi
     if (( attempt < max_attempts )); then
       [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} ..."
@@ -297,8 +299,18 @@ run_client() {
     exit 1
   fi
 
+  if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]] && ! grep -q "LAKE_PASSED" "$out" 2>/dev/null; then
+    echo "error: expected LAKE_PASSED row missing (DuckLake inventory query failed)" >&2
+    quacktail_dump_client_failure
+    exit 1
+  fi
+
   if [[ "$QUIET" == "1" ]]; then
-    echo "✓ Demo passed — two-node QuackTail cluster is working"
+    if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]]; then
+      echo "✓ Demo passed — QuackTail cluster + DuckLake over tailnet"
+    else
+      echo "✓ Demo passed — two-node QuackTail cluster is working"
+    fi
   else
     echo "ok: client e2e passed (PASSED row present)"
   fi

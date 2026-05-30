@@ -78,6 +78,15 @@ SQL
   fi
 }
 
+compose_sql_attach_ducklake() {
+  local attach_uri="${1:?attach uri required}"
+  local lake_name="${2:?lake name required}"
+  local data_path="${3:?data path required}"
+  cat <<SQL
+ATTACH 'ducklake:${attach_uri}' AS ${lake_name} (DATA_PATH '${data_path}');
+SQL
+}
+
 write_server_ducklake_sql() {
   [[ "$ENABLE_DUCKLAKE" == "1" ]] || return 0
   mkdir -p "$(dirname "$LAKE_METADATA")" "$LAKE_DATA_PATH"
@@ -142,8 +151,10 @@ write_client_session_sql() {
   local ping_sql=""
   local forward_sql=""
   local lake_load=""
+  local lake_discover=""
+  local lake_attach=""
   local lake_select=""
-  local lake_passed_col=""
+  local lake_passed_sql=""
   if duckdb_has_quackscale_function tailscale_ping; then
     ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
   fi
@@ -154,8 +165,10 @@ write_client_session_sql() {
   fi
   if [[ "$ENABLE_DUCKLAKE" == "1" ]]; then
     lake_load=$'LOAD ducklake;\n'
-    lake_select=$'SELECT * FROM remote.'"${LAKE_NAME}"$'.inventory ORDER BY item_id LIMIT 5;\n'
-    lake_passed_col=$',\n    (SELECT COUNT(*)::INTEGER FROM remote.'"${LAKE_NAME}"$'.inventory) AS inventory_rows'
+    lake_discover=$'FROM quack_discover();\n'
+    lake_attach="$(compose_sql_attach_ducklake "$attach_uri" "$LAKE_NAME" "$LAKE_DATA_PATH")"
+    lake_select=$'SELECT * FROM '"${LAKE_NAME}"$'.inventory ORDER BY item_id LIMIT 5;\n'
+    lake_passed_sql=$'SELECT\n    '"'"'LAKE_PASSED'"'"' AS status,\n    COUNT(*)::INTEGER AS inventory_rows\nFROM '"${LAKE_NAME}"$'.inventory;\n'
   fi
   cat >"$WORK/client_session.sql" <<SQL
 LOAD quackscale;
@@ -171,7 +184,7 @@ CALL tailscale_up(
 ${forward_sql}
 
 ${ping_sql}
-
+${lake_discover}
 SET extension_directory='/duckdb_extensions';
 LOAD quack;
 ${lake_load}
@@ -191,13 +204,14 @@ FROM quack_query(
 $(compose_sql_attach_remote "$attach_uri")
 
 SELECT * FROM remote.e2e_payload LIMIT 5;
-${lake_select}
+${lake_attach}
+${lake_select}${lake_passed_sql}
 SELECT
     'PASSED' AS status,
     '${attach_uri}' AS attach_uri,
     MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
     MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
-    COUNT(*)::INTEGER AS total_rows${lake_passed_col}
+    COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
 SQL
   write_client_init_sql "$authkey"
@@ -303,7 +317,7 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_proxy' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "remote.${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
+    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "ducklake:quack:" "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"
   fi

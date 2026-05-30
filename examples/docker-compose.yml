@@ -163,6 +163,11 @@ services:
     depends_on:
       quacktail-server:
         condition: service_healthy
+    volumes:
+      - quacktail-work:/work
+      - ducklake-lake:/var/lib/ducklake:ro
+      - headscale-data:/var/lib/headscale
+      - headscale-run:/var/run/headscale
     environment:
       <<: *env
       QUACKTAIL_WORK: /work

@@ -32,10 +32,9 @@ CALL quack_serve(
 --
 -- CREATE SECRET (TYPE quack, TOKEN 'quackscale-demo-token', SCOPE 'quack:127.0.0.1:9494');
 --
--- Option A: query lake tables via Quack attach
+-- Option A: query lake tables via DuckLake-over-Quack (catalog over Quack, Parquet via DATA_PATH)
 -- ATTACH 'quack:127.0.0.1:9494' AS remote (TYPE quack);
--- SELECT * FROM remote.lake.inventory;
+-- ATTACH 'ducklake:quack:127.0.0.1:9494' AS lake (DATA_PATH './lake/data/');
+-- SELECT * FROM lake.inventory;
 --
--- Option B: DuckLake metadata via Quack URI (local Parquet path on client)
--- ATTACH 'ducklake:quack:127.0.0.1:9494' AS my_lake (DATA_PATH './lake/data/');
--- SELECT * FROM my_lake.inventory;
+-- Do NOT use remote.lake.inventory — plain quack attach does not expose nested DuckLake catalogs.
