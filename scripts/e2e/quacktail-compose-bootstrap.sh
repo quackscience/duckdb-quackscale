@@ -205,7 +205,7 @@ write_client_session_sql() {
     fi
   fi
   cat >"$WORK/client_session.sql" <<SQL
--- quacktail: client-session lake=$(client_sql_lake_mode)
+-- quacktail client session
 LOAD quackscale;
 
 CALL tailscale_up(
@@ -488,9 +488,7 @@ fi
 
 if [[ -z "$AUTHKEY" ]]; then
   echo "error: failed to create Headscale authkey" >&2
-  echo "headscale users list:" >&2
   "${HS[@]}" users list >&2 || true
-  echo "headscale preauthkeys create (debug):" >&2
   create_authkey >&2 || true
   exit 1
 fi

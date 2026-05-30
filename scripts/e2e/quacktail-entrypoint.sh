@@ -167,14 +167,9 @@ client_attach_uri() {
 
 quacktail_dump_client_failure() {
   local out="${WORK}/client.out"
-  local tsnet_log="${WORK}/client-tsnet.log"
   if [[ -s "$out" ]]; then
     echo "--- client.out (tail) ---" >&2
     tail -30 "$out" >&2
-  fi
-  if [[ -s "$tsnet_log" ]]; then
-    echo "--- client-tsnet.log (tail) ---" >&2
-    tail -30 "$tsnet_log" >&2
   fi
 }
 
@@ -192,11 +187,7 @@ quacktail_client_on_signal() {
 
 quacktail_client_has_fatal_sql_error() {
   local out="${1:?client out file}"
-  local tsnet_log="${WORK}/client-tsnet.log"
-  grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$out" 2>/dev/null \
-    && return 0
-  [[ -s "$tsnet_log" ]] \
-    && grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$tsnet_log" 2>/dev/null
+  grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$out" 2>/dev/null
 }
 
 quacktail_client_session_succeeded() {
@@ -237,14 +228,12 @@ run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
   local demo_timeout="${3:?timeout}"
-  local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
   local timeout_cmd=(timeout --foreground --kill-after=3 "$demo_timeout")
   local duck_pid=0
   local deadline=0
 
   ext_cmd="$(quacktail_sql_extension_directory)"
-  : >"$tsnet_log"
   : >"$out"
 
   # Background duckdb → client.out; monitor client.out for CLIENT_DEMO_DONE then SIGTERM/KILL.
@@ -325,32 +314,12 @@ client_demo_banner() {
   fi
 }
 
-quacktail_log_quackscale_caps() {
-  [[ "$QUIET" == "1" ]] || return 0
-  local lake_mode="quack_query"
-  local down="no"
-  if [[ -f /etc/quacktail/build-info ]]; then
-    echo "→ image: $(tr '\n' ' ' < /etc/quacktail/build-info)"
-  fi
-  quacktail_has_quackscale_function attach_ducklake && lake_mode="attach_ducklake"
-  quacktail_has_quackscale_function tailscale_down && down="yes"
-  echo "→ quackscale: lake=${lake_mode} tailscale_down=${down}"
-  if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" && "$lake_mode" == "quack_query" ]]; then
-    echo "  error: attach_ducklake missing — image was not built from source with current ducklake branch" >&2
-    quacktail_list_quackscale_functions >&2 || true
-  fi
-}
-
 quacktail_require_attach_ducklake() {
   [[ "${QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE:-0}" == "1" ]] || return 0
   [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]] || return 0
   quacktail_has_quackscale_function attach_ducklake && return 0
   echo "error: attach_ducklake required but not in this image" >&2
-  [[ -f /etc/quacktail/build-info ]] && cat /etc/quacktail/build-info >&2
-  [[ -f /etc/quacktail/git-rev ]] && echo "git-rev: $(cat /etc/quacktail/git-rev)" >&2
   echo "Rebuild: cd examples && docker compose build --no-cache quacktail-client" >&2
-  echo "Ensure BUILD_FROM_SOURCE=1 (release v1.0.2 does not include attach_ducklake)" >&2
-  quacktail_list_quackscale_functions >&2 || true
   exit 1
 }
 
@@ -374,7 +343,6 @@ run_client() {
   wait_for_tailnet_server
   ensure_quack
   quacktail_require_attach_ducklake
-  quacktail_log_quackscale_caps
   ensure_server_hosts_mapping
   ensure_client_sql
   attach_uri="$(client_attach_uri)"
@@ -409,12 +377,6 @@ run_client() {
     if quacktail_client_session_succeeded "$out"; then
       duckdb_rc=0
       break
-    fi
-    if grep -q "PASSED" "$out" 2>/dev/null \
-      && { [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" != "1" ]] || grep -q "LAKE_PASSED" "$out" 2>/dev/null; }; then
-      echo "error: demo passed but CLIENT_DEMO_DONE missing (teardown or exit failed)" >&2
-      quacktail_dump_client_failure
-      exit 1
     fi
     if (( attempt < max_attempts )); then
       [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} ..."

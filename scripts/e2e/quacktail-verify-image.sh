@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify quackscale in the container image (Dockerfile + runtime diagnostics).
+# Verify required quackscale functions are present in the container image.
 set -euo pipefail
 
 DUCKDB_BIN="${DUCKDB_BIN:-/usr/local/bin/duckdb}"

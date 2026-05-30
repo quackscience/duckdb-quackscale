@@ -29,11 +29,10 @@ RUN if [ "$BUILD_FROM_SOURCE" = "1" ]; then \
 WORKDIR /src
 COPY . /src/
 
-COPY scripts/e2e/docker-build-quackscale.sh /usr/local/bin/docker-build-quackscale.sh
-RUN chmod +x /usr/local/bin/docker-build-quackscale.sh
+RUN chmod +x /src/scripts/e2e/docker-build-quackscale.sh
 
 RUN if [ "$BUILD_FROM_SOURCE" = "1" ]; then \
-      /usr/local/bin/docker-build-quackscale.sh /out; \
+      /src/scripts/e2e/docker-build-quackscale.sh /out; \
     else \
       echo "build_from_source=0" > /out/build-info \
       && echo "release_tag=${QUACKTAIL_RELEASE_TAG}" >> /out/build-info; \

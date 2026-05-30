@@ -50,4 +50,4 @@ else
   echo "docker-build" > "$OUT/git-rev"
 fi
 echo "build_from_source=1" > "$OUT/build-info"
-echo "✓ quackscale builder done — $(wc -c < "$EXT_ART") byte extension, duckdb at $OUT/duckdb"
+echo "✓ quackscale builder done"

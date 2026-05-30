@@ -29,25 +29,14 @@ Quack HTTP uses **kernel TCP**. Embedded tsnet does not route that traffic. `tai
 
 ## Run the demo
 
-**Requires source-built images** (`BUILD_FROM_SOURCE=1`, compose default). Clone **with submodules** before building:
+Source build is required for the DuckLake demo (`attach_ducklake`, `tailscale_down`).
 
 ```bash
 git pull
 git submodule update --init --recursive
 cd examples
 docker compose build --no-cache quacktail-server quacktail-client
-```
-
-```bash
 docker compose run --rm --entrypoint /usr/local/bin/quacktail-verify-image.sh quacktail-client
-docker compose run --rm --entrypoint cat quacktail-client /etc/quacktail/build-info
-```
-
-Expect `build_from_source=1` and `ok: quackscale image verify`.
-
-```bash
-git pull && cd examples
-docker compose build --no-cache quacktail-server quacktail-client
 docker compose up -d --force-recreate headscale quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```
@@ -82,8 +71,6 @@ Expect:
 ```text
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-✓ client SQL ready — attach quack:127.0.0.1:19494 (lake: attach_ducklake)
-→ quackscale: lake=attach_ducklake tailscale_down=yes
 
 QuackTail cluster demo
 ======================
@@ -106,7 +93,7 @@ CALL tailscale_down();
 
 The client runs one DuckDB session (`duckdb -batch -echo -f /work/client_session.sql`). Compose waits for `quacktail-server` **healthy** (server.log shows `quack_serve` + `tailscale_serve_local`) before starting the client.
 
-Set `QUACKTAIL_QUIET=0` to print full SQL. libtailscale detail: `/work/client-tsnet.log` (client), `/work/server.log` (server).
+Set `QUACKTAIL_QUIET=0` to print full SQL. Server libtailscale logs: `/work/server.log`.
 
 ## Services
 
