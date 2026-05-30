@@ -154,8 +154,8 @@ write_client_session_sql() {
   fi
   if [[ "$ENABLE_DUCKLAKE" == "1" ]]; then
     lake_load=$'LOAD ducklake;\n'
-    lake_select=$"SELECT * FROM remote.${LAKE_NAME}.inventory ORDER BY item_id LIMIT 5;\n"
-    lake_passed_col=$",\n    (SELECT COUNT(*)::INTEGER FROM remote.${LAKE_NAME}.inventory) AS inventory_rows"
+    lake_select=$'SELECT * FROM remote.'"${LAKE_NAME}"$'.inventory ORDER BY item_id LIMIT 5;\n'
+    lake_passed_col=$',\n    (SELECT COUNT(*)::INTEGER FROM remote.'"${LAKE_NAME}"$'.inventory) AS inventory_rows'
   fi
   cat >"$WORK/client_session.sql" <<SQL
 LOAD quackscale;

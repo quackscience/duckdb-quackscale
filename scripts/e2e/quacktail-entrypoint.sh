@@ -173,34 +173,63 @@ quacktail_dump_client_failure() {
   fi
 }
 
+QUACKTAIL_CLIENT_SESSION_PID=""
+
+quacktail_is_signal_rc() {
+  case "${1:-0}" in
+    130|143) return 0 ;;
+  esac
+  return 1
+}
+
+quacktail_client_on_signal() {
+  local rc=130
+  [[ "${1:-INT}" == TERM ]] && rc=143
+  if [[ -n "$QUACKTAIL_CLIENT_SESSION_PID" ]] \
+    && kill -0 "$QUACKTAIL_CLIENT_SESSION_PID" 2>/dev/null; then
+    kill -INT "$QUACKTAIL_CLIENT_SESSION_PID" 2>/dev/null || true
+    wait "$QUACKTAIL_CLIENT_SESSION_PID" 2>/dev/null || true
+  fi
+  echo "Interrupted — stopping client demo" >&2
+  exit "$rc"
+}
+
 run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
   local demo_timeout="${3:?timeout}"
   local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
+  local timeout_cmd=(timeout --foreground "$demo_timeout")
 
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
 
   # Same invocation as scripts/local_remote_headscale_test.sh (-f, no -bail, no -init file db).
-  set +o pipefail
-  if [[ "$QUIET" == "1" ]]; then
-    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-      -cmd "$ext_cmd" -f "$session_sql" \
-      2>>"$tsnet_log" | quacktail_filter_demo_stream | tee "$out"
-  else
-    timeout "$demo_timeout" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-      -cmd "$ext_cmd" -f "$session_sql" \
-      2>&1 | quacktail_filter_demo_stream | tee "$out"
-  fi
-  duckdb_rc=$?
-  set -o pipefail
+  # Subshell + background wait so SIGINT can kill the whole pipeline via trap.
+  (
+    set +o pipefail
+    if [[ "$QUIET" == "1" ]]; then
+      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+        -cmd "$ext_cmd" -f "$session_sql" \
+        2>>"$tsnet_log" | quacktail_filter_demo_stream | tee "$out"
+    else
+      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+        -cmd "$ext_cmd" -f "$session_sql" \
+        2>&1 | quacktail_filter_demo_stream | tee "$out"
+    fi
+  ) &
+  QUACKTAIL_CLIENT_SESSION_PID=$!
+  wait "$QUACKTAIL_CLIENT_SESSION_PID" || duckdb_rc=$?
+  QUACKTAIL_CLIENT_SESSION_PID=""
 
   if [[ "$duckdb_rc" -eq 124 ]]; then
     echo "error: client demo timed out after ${demo_timeout}s" >&2
     quacktail_dump_client_failure
     return 124
+  fi
+  if quacktail_is_signal_rc "$duckdb_rc"; then
+    return "$duckdb_rc"
   fi
   return "$duckdb_rc"
 }
@@ -214,6 +243,9 @@ run_client() {
   local attach_uri
   local duckdb_rc=0
   local attempt
+
+  trap 'quacktail_client_on_signal INT' INT
+  trap 'quacktail_client_on_signal TERM' TERM
 
   wait_for_tailnet_server
   ensure_quack
@@ -240,13 +272,16 @@ run_client() {
     duckdb_rc=0
     run_duckdb_client_session "$session_sql" "$out" "$demo_timeout" \
       || duckdb_rc=$?
+    if quacktail_is_signal_rc "$duckdb_rc"; then
+      exit "$duckdb_rc"
+    fi
     if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
       break
     fi
     if (( attempt < max_attempts )); then
       [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} ..."
       quacktail_dump_client_failure
-      sleep "$poll_sec"
+      sleep "$poll_sec" || exit 130
     fi
   done
 
