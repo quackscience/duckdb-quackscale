@@ -396,7 +396,7 @@ DuckLake metadata: file (`*.ducklake`), Postgres, or DuckDB file — see [DuckLa
 ### Observability
 
 - Server: `CALL tailscale_status()`, Quack logs, `/work/server.log` in compose  
-- Client: `/work/client.out`, `/work/client-tsnet.log`  
+- Client: `/work/client.out`  
 - Readiness: `CALL tailscale_ping(host => 'peer', port => 9494)` before heavy queries
 
 ---
