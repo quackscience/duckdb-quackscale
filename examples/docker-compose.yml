@@ -30,6 +30,7 @@ x-env: &env
   CLIENT_HOST: quacktail-client
   DUCKDB_EXTENSION_DIRECTORY: /duckdb_extensions
   QUACKTAIL_ENABLE_DUCKLAKE: ${QUACKTAIL_ENABLE_DUCKLAKE:-1}
+  QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE: ${QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE:-1}
   QUACKTAIL_LAKE_NAME: ${QUACKTAIL_LAKE_NAME:-lake}
   QUACKTAIL_LAKE_METADATA: ${QUACKTAIL_LAKE_METADATA:-/var/lib/ducklake/metadata/inventory.ducklake}
   QUACKTAIL_LAKE_DATA_PATH: ${QUACKTAIL_LAKE_DATA_PATH:-/var/lib/ducklake/data}
@@ -52,6 +53,7 @@ x-quacktail: &quacktail
       BUILD_FROM_SOURCE: ${BUILD_FROM_SOURCE:-1}
       GITHUB_REPO: ${GITHUB_REPO:-quackscience/duckdb-quackscale}
       QUACKTAIL_RELEASE_TAG: ${QUACKTAIL_RELEASE_TAG:-v1.0.2}
+    # DuckLake demo needs attach_ducklake — do not set BUILD_FROM_SOURCE=0 until a release includes it.
   cap_add: [NET_ADMIN]
   devices: [/dev/net/tun]
   <<: *headscale_volumes

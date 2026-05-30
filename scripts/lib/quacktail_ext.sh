@@ -16,19 +16,32 @@ quacktail_has_quackscale_function() {
   local fn="${1:?function name required}"
   local duckdb_bin="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
   local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
-  local count
+  local out count
   [[ -x "$duckdb_bin" ]] || return 1
-  count="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+  out="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
     "SET extension_directory='${ext_dir}'; LOAD quackscale; \
-     SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
-    2>/dev/null | tr -d '[:space:]')"
-  if [[ "$count" == "1" ]]; then
-    return 0
-  fi
-  count="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
-    "LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
-    2>/dev/null | tr -d '[:space:]')"
+     SELECT CAST(COUNT(*) AS VARCHAR) FROM duckdb_functions() WHERE function_name='${fn}';" \
+    2>&1)" || true
+  count="$(printf '%s\n' "$out" | tail -1 | tr -d '[:space:]')"
+  [[ "$count" == "1" ]] && return 0
+  out="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "LOAD quackscale; SELECT CAST(COUNT(*) AS VARCHAR) FROM duckdb_functions() WHERE function_name='${fn}';" \
+    2>&1)" || true
+  count="$(printf '%s\n' "$out" | tail -1 | tr -d '[:space:]')"
   [[ "$count" == "1" ]]
+}
+
+quacktail_list_quackscale_functions() {
+  local duckdb_bin="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
+  [[ -x "$duckdb_bin" ]] || return 1
+  "$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "SET extension_directory='${ext_dir}'; LOAD quackscale; \
+     SELECT function_name FROM duckdb_functions() \
+     WHERE function_name LIKE 'tailscale_%' \
+        OR function_name LIKE 'attach_%' \
+        OR function_name IN ('quack_uri', 'quack_token', 'quack_discover') \
+     ORDER BY 1;"
 }
 
 quacktail_ext_verify_artifact() {

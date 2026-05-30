@@ -29,7 +29,16 @@ Quack HTTP uses **kernel TCP**. Embedded tsnet does not route that traffic. `tai
 
 ## Run the demo
 
-**Requires source-built images** (`BUILD_FROM_SOURCE=1`, compose default) for `attach_ducklake` and `tailscale_down`. Release tag `v1.0.2` does not include them.
+**Requires source-built images** (`BUILD_FROM_SOURCE=1`, compose default). Release `v1.0.2` does **not** include `attach_ducklake` or `tailscale_down`.
+
+Verify the image before running the client demo:
+
+```bash
+docker compose run --rm --entrypoint /usr/local/bin/quacktail-verify-image.sh quacktail-client
+docker compose run --rm --entrypoint cat quacktail-client /etc/quacktail/build-info
+```
+
+Expect `build_from_source=1` and `ok: quackscale image verify`.
 
 ```bash
 git pull && cd examples

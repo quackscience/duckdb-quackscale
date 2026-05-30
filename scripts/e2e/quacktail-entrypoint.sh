@@ -328,12 +328,29 @@ quacktail_log_quackscale_caps() {
   [[ "$QUIET" == "1" ]] || return 0
   local lake_mode="quack_query"
   local down="no"
+  if [[ -f /etc/quacktail/build-info ]]; then
+    echo "→ image: $(tr '\n' ' ' < /etc/quacktail/build-info)"
+  fi
   quacktail_has_quackscale_function attach_ducklake && lake_mode="attach_ducklake"
   quacktail_has_quackscale_function tailscale_down && down="yes"
   echo "→ quackscale: lake=${lake_mode} tailscale_down=${down}"
   if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" && "$lake_mode" == "quack_query" ]]; then
-    echo "  (rebuild images with BUILD_FROM_SOURCE=1 for attach_ducklake — release v1.0.2 lacks it)"
+    echo "  error: attach_ducklake missing — image was not built from source with current ducklake branch" >&2
+    quacktail_list_quackscale_functions >&2 || true
   fi
+}
+
+quacktail_require_attach_ducklake() {
+  [[ "${QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE:-0}" == "1" ]] || return 0
+  [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]] || return 0
+  quacktail_has_quackscale_function attach_ducklake && return 0
+  echo "error: attach_ducklake required but not in this image" >&2
+  [[ -f /etc/quacktail/build-info ]] && cat /etc/quacktail/build-info >&2
+  [[ -f /etc/quacktail/git-rev ]] && echo "git-rev: $(cat /etc/quacktail/git-rev)" >&2
+  echo "Rebuild: cd examples && docker compose build --no-cache quacktail-client" >&2
+  echo "Ensure BUILD_FROM_SOURCE=1 (release v1.0.2 does not include attach_ducklake)" >&2
+  quacktail_list_quackscale_functions >&2 || true
+  exit 1
 }
 
 run_client() {
@@ -355,6 +372,7 @@ run_client() {
 
   wait_for_tailnet_server
   ensure_quack
+  quacktail_require_attach_ducklake
   quacktail_log_quackscale_caps
   ensure_server_hosts_mapping
   ensure_client_sql
