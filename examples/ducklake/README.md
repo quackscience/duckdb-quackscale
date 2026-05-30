@@ -9,8 +9,8 @@ quacktail-server                          quacktail-client
 ─────────────────                         ─────────────────
 tailscale_up                              tailscale_up
 ATTACH ducklake:… AS lake (local Parquet)  tailscale_quack_forward
-  └─ ducklake-lake volume                   quack_query → quack_discover()  (find)
-quack_serve(127.0.0.1:9494)               quack_query → lake.inventory     (query)
+  └─ ducklake-lake volume                   tailscale_ping + quack_query (find lake)
+quack_serve(127.0.0.1:9494)               quack_query → lake.inventory
 tailscale_serve_local                     ATTACH quack:… AS remote (e2e)
 ```
 
@@ -39,13 +39,18 @@ Expect `PASSED` (Quack e2e) and `LAKE_PASSED` with `inventory_rows = 2`.
 
 ```sql
 CALL tailscale_quack_forward(host => 'quacktail-server', port => 9494, local_port => 19494);
+CALL tailscale_ping(host => 'quacktail-server', port => 9494);
 CREATE SECRET (TYPE quack, TOKEN 'quackscale-demo-token', SCOPE 'quack:127.0.0.1:19494');
 
--- Find: run quack_discover on the server (not locally — local discover lists this node only)
-FROM quack_query('quack:127.0.0.1:19494', 'FROM quack_discover()', token => '…', disable_ssl => true);
+-- Find lake catalog on server (do not quack_query quack_discover — it hangs)
+FROM quack_query('quack:127.0.0.1:19494',
+    'SELECT database_name FROM duckdb_databases() WHERE database_name = ''lake''',
+    token => 'quackscale-demo-token', disable_ssl => true);
 
--- Query: SQL executes on server where lake is attached
-FROM quack_query('quack:127.0.0.1:19494', 'SELECT * FROM lake.inventory', token => '…', disable_ssl => true);
+-- Query inventory (SQL runs on server)
+FROM quack_query('quack:127.0.0.1:19494',
+    'SELECT * FROM lake.inventory',
+    token => 'quackscale-demo-token', disable_ssl => true);
 ```
 
 See [docs/DUCKLAKE_TAILNET.md](../docs/DUCKLAKE_TAILNET.md) and [local-demo.sql](local-demo.sql).

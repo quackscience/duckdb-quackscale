@@ -182,7 +182,8 @@ write_client_session_sql() {
     forward_sql="CALL tailscale_quack_proxy();"
   fi
   if [[ "$ENABLE_DUCKLAKE" == "1" ]]; then
-    lake_discover="$(compose_sql_quack_query "$attach_uri" "FROM quack_discover();")"
+    # Do not quack_query('…', 'FROM quack_discover()') — hangs when invoked on server over Quack.
+    lake_discover="$(compose_sql_quack_query "$attach_uri" "SELECT database_name FROM duckdb_databases() WHERE database_name = '${LAKE_NAME}'")"
     lake_select="$(compose_sql_quack_query "$attach_uri" "SELECT * FROM ${LAKE_NAME}.inventory ORDER BY item_id LIMIT 5")"
     lake_passed_sql="$(compose_sql_quack_query "$attach_uri" "SELECT 'LAKE_PASSED' AS status, COUNT(*)::INTEGER AS inventory_rows FROM ${LAKE_NAME}.inventory")"
   fi
@@ -216,13 +217,12 @@ FROM quack_query(
     token => '${QUACK_TOKEN}',
     disable_ssl => true
 );
-
-$(compose_sql_attach_remote "$attach_uri")
-
-SELECT * FROM remote.e2e_payload LIMIT 5;
 ${lake_discover}
 ${lake_select}
 ${lake_passed_sql}
+$(compose_sql_attach_remote "$attach_uri")
+
+SELECT * FROM remote.e2e_payload LIMIT 5;
 SELECT
     'PASSED' AS status,
     '${attach_uri}' AS attach_uri,

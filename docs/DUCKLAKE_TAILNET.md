@@ -7,28 +7,32 @@ Goal: serve DuckLake on a QuackTail node via **Quack**, reachable on the **Heads
 | Piece | Status |
 |-------|--------|
 | Server: local DuckLake + `quack_serve` + `tailscale_serve_local` | **Done** |
-| Client: `quack_query` → `quack_discover()` + `lake.inventory` | **Done** |
+| Client: tailscale forward + `quack_query` lake probe/query | **Done** |
 | Client `ducklake:quack:` attach (client-side `DATA_PATH`) | Documented — use when Parquet is local/shared |
 | `ducklake_discover()` / enriched `quack_discover` | TBD |
 
 ## Find + query on tailnet
 
-### 1) Find Quack / DuckLake servers
+### 1) Find the server and its DuckLake catalog
 
-`FROM quack_discover()` on **this** node lists **local** tailnet URIs only. To discover a **remote** server's endpoints, run discover **on the server** via Quack:
+On the client, **tailnet routing** finds the server; **`quack_discover()` must run locally** (do not invoke it via `quack_query` on the server — that hangs over Quack):
 
 ```sql
 CALL tailscale_quack_forward(host => 'quacktail-server', port => 9494, local_port => 19494);
+CALL tailscale_ping(host => 'quacktail-server', port => 9494);
+
 CREATE SECRET (TYPE quack, TOKEN '…', SCOPE 'quack:127.0.0.1:19494');
 
+-- Confirm the lake catalog exists on the server
 FROM quack_query(
     'quack:127.0.0.1:19494',
-    'FROM quack_discover()',
+    'SELECT database_name FROM duckdb_databases() WHERE database_name = ''lake''',
     token => '…',
     disable_ssl => true
 );
--- → quack:quacktail-server:9494, quack:100.64.x.x:9494, …
 ```
+
+Run `FROM quack_discover()` **on the server node** (or locally to list this host's Quack URIs).
 
 ### 2) Query DuckLake tables
 
@@ -61,7 +65,7 @@ FROM quack_query(
 ## Constraints
 
 - **Quack streaming-scan limit** — one remote Quack read/write per SQL statement; see [QUACK_STREAMING.md](QUACK_STREAMING.md). Each `quack_query` call is one statement.
-- **Discovery** — remote discover = `quack_query(..., 'FROM quack_discover()')` until `ducklake_discover()` lands.
+- **Discovery** — client uses `tailscale_quack_forward` + `tailscale_ping`; probe lake with `quack_query(..., duckdb_databases())`. Do **not** `quack_query(..., 'FROM quack_discover()')`.
 
 ## Demo
 
