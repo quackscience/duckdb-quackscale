@@ -116,15 +116,14 @@ static void RemoteLakeAttachFunction(ClientContext &context, TableFunctionInput 
 
 	RunStatement(conn, "CREATE SCHEMA IF NOT EXISTS " + bind.alias);
 
-	const string list_sql = StringUtil::Format(
-	    "SELECT table_name FROM duckdb_tables() WHERE database_name = '%s' ORDER BY table_name",
-	    EscapeSqlString(bind.remote_catalog));
+	const string list_sql =
+	    StringUtil::Format("SELECT table_name FROM duckdb_tables() WHERE database_name = '%s' ORDER BY table_name",
+	                       EscapeSqlString(bind.remote_catalog));
 	const auto list_from = BuildQuackQueryFromClause(bind.quack_uri, list_sql, bind.token, bind.disable_ssl);
 
 	auto tables = conn.Query(list_from);
 	if (tables->HasError()) {
-		throw InvalidInputException("attach_ducklake: could not list remote tables: %s",
-		                            tables->GetError());
+		throw InvalidInputException("attach_ducklake: could not list remote tables: %s", tables->GetError());
 	}
 
 	idx_t row_count = 0;
@@ -135,11 +134,10 @@ static void RemoteLakeAttachFunction(ClientContext &context, TableFunctionInput 
 		}
 		ValidateIdentifier(table_name, "remote table name");
 
-		const string remote_select =
-		    StringUtil::Format("SELECT * FROM %s.%s", bind.remote_catalog, table_name);
-		const string view_sql = StringUtil::Format(
-		    "CREATE OR REPLACE VIEW %s.%s AS %s", bind.alias, table_name,
-		    BuildQuackQueryFromClause(bind.quack_uri, remote_select, bind.token, bind.disable_ssl));
+		const string remote_select = StringUtil::Format("SELECT * FROM %s.%s", bind.remote_catalog, table_name);
+		const string view_sql =
+		    StringUtil::Format("CREATE OR REPLACE VIEW %s.%s AS %s", bind.alias, table_name,
+		                       BuildQuackQueryFromClause(bind.quack_uri, remote_select, bind.token, bind.disable_ssl));
 
 		RunStatement(conn, view_sql);
 		bind.created_views.push_back(bind.alias + "." + table_name);
@@ -168,8 +166,7 @@ static void RemoteLakeAttachFunction(ClientContext &context, TableFunctionInput 
 } // namespace
 
 void RegisterAttachDucklakeFunctions(ExtensionLoader &loader) {
-	TableFunction attach("attach_ducklake", {LogicalType::VARCHAR}, RemoteLakeAttachFunction,
-	                     RemoteLakeAttachBind);
+	TableFunction attach("attach_ducklake", {LogicalType::VARCHAR}, RemoteLakeAttachFunction, RemoteLakeAttachBind);
 	attach.named_parameters["remote_catalog"] = LogicalType::VARCHAR;
 	attach.named_parameters["alias"] = LogicalType::VARCHAR;
 	attach.named_parameters["token"] = LogicalType::VARCHAR;

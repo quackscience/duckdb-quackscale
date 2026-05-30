@@ -486,8 +486,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction down_function("tailscale_down", {}, QuackscaleDownFunction, QuackscaleDownBind);
 	loader.RegisterFunction(down_function);
 
-	TableFunction login_function("tailscale_login", {}, QuackscaleBeginLoginFunction,
-	                             QuackscaleBeginLoginBind);
+	TableFunction login_function("tailscale_login", {}, QuackscaleBeginLoginFunction, QuackscaleBeginLoginBind);
 	RegisterAuthParameters(login_function);
 	loader.RegisterFunction(login_function);
 
@@ -499,8 +498,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    TableFunction("tailscale_proxy_status", {}, QuackscaleProxyStatusFunction, QuackscaleProxyStatusBind));
 
-	loader.RegisterFunction(TableFunction("tailscale_quack_proxy", {}, QuackscaleQuackProxyFunction,
-	                                      QuackscaleQuackProxyBind));
+	loader.RegisterFunction(
+	    TableFunction("tailscale_quack_proxy", {}, QuackscaleQuackProxyFunction, QuackscaleQuackProxyBind));
 
 	TableFunction forward_function("tailscale_quack_forward", {}, QuackscaleQuackForwardFunction,
 	                               QuackscaleQuackForwardBind);
