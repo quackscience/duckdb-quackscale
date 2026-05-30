@@ -226,6 +226,12 @@ quacktail_stop_process() {
   wait "$pid" 2>/dev/null || true
 }
 
+quacktail_show_client_demo_output() {
+  local out="${1:-${WORK}/client.out}"
+  [[ -s "$out" ]] || return 0
+  quacktail_filter_demo_stream <"$out"
+}
+
 run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
@@ -240,16 +246,16 @@ run_duckdb_client_session() {
   : >"$tsnet_log"
   : >"$out"
 
-  # Live tee + monitor: CLIENT_DEMO_DONE is last (after optional tailscale_down); then SIGTERM/KILL.
+  # Background duckdb → client.out; monitor file for CLIENT_DEMO_DONE then SIGTERM/KILL.
   set +o pipefail
   if [[ "$QUIET" == "1" ]]; then
     "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
       -cmd "$ext_cmd" -f "$session_sql" \
-      2>&1 | tee "$out" "$tsnet_log" >/dev/null &
+      >"$out" 2>&1 &
   else
     "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
       -cmd "$ext_cmd" -f "$session_sql" \
-      2>&1 | tee "$out" "$tsnet_log" &
+      2>&1 | tee "$out" &
   fi
   duck_pid=$!
   deadline=$((SECONDS + demo_timeout + 5))
@@ -363,6 +369,8 @@ run_client() {
   fi
 
   if [[ "$QUIET" == "1" ]]; then
+    quacktail_show_client_demo_output "$out"
+    echo ""
     if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]]; then
       echo "✓ Demo passed — QuackTail cluster + DuckLake over tailnet"
     else
