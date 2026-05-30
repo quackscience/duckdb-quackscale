@@ -78,9 +78,9 @@ RUN mkdir -p /duckdb_extensions \
          cp -a /opt/quacktail-build/quackscale-ext/. /duckdb_extensions/ \
          && duckdb :memory: -batch -csv -noheader -c \
               "SET extension_directory='/duckdb_extensions'; LOAD quackscale; \
-               SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_down';" \
-            | grep -qx 1 \
-         || { echo "error: built quackscale missing tailscale_down (rebuild with --no-cache)" >&2; exit 1; }; \
+               SELECT COUNT(*) FROM duckdb_functions() WHERE function_name IN ('tailscale_down', 'attach_ducklake');" \
+            | grep -qx '2' \
+         || { echo "error: built quackscale missing tailscale_down or attach_ducklake (rebuild with --no-cache)" >&2; exit 1; }; \
        fi \
     && duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL quack FROM core; LOAD quack; SELECT 1;" \
     || duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;" \

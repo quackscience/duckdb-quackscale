@@ -295,6 +295,34 @@ run_duckdb_client_session() {
   return "$duckdb_rc"
 }
 
+run_bootstrap() {
+  if [[ ! -f "${WORK}/authkey" ]]; then
+    echo "error: ${WORK}/authkey missing — start headscale + quacktail-server first" >&2
+    exit 1
+  fi
+  if [[ "$QUIET" == "1" ]]; then
+    echo "→ refreshing /work SQL on volume (no client demo) ..."
+  fi
+  COMPOSE_REFRESH_CLIENT_SQL=1 COMPOSE_REFRESH_SERVER_QUACK=1 \
+    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+  if [[ "$QUIET" == "1" ]]; then
+    echo "✓ bootstrap complete — run: docker compose --profile test run --rm quacktail-client"
+  else
+    echo "ok: bootstrap complete"
+  fi
+}
+
+client_demo_banner() {
+  local session_sql="${1:?session sql}"
+  local attach_uri="${2:?attach uri}"
+  if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]] \
+    && grep -q 'attach_ducklake' "$session_sql" 2>/dev/null; then
+    echo "→ join tailnet, forward, attach_ducklake, ATTACH ${attach_uri} ..."
+  else
+    echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
+  fi
+}
+
 run_client() {
   local session_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
@@ -326,7 +354,7 @@ run_client() {
     echo ""
     echo "QuackTail cluster demo"
     echo "======================"
-    echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
+    client_demo_banner "$session_sql" "$attach_uri"
     echo ""
   else
     echo "=== client session SQL (-f) ==="
@@ -384,5 +412,6 @@ run_client() {
 case "$ROLE" in
   server) run_server ;;
   client) run_client ;;
-  *) echo "error: unknown QUACKTAIL_ROLE '$ROLE'" >&2; exit 1 ;;
+  bootstrap) run_bootstrap ;;
+  *) echo "error: unknown QUACKTAIL_ROLE '$ROLE' (use server, client, or bootstrap)" >&2; exit 1 ;;
 esac

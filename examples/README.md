@@ -31,12 +31,21 @@ Quack HTTP uses **kernel TCP**. Embedded tsnet does not route that traffic. `tai
 
 ```bash
 git pull && cd examples
-docker compose build quacktail-server quacktail-client
+docker compose build --no-cache quacktail-server quacktail-client
 docker compose up -d --force-recreate headscale quacktail-server
 docker compose --profile test run --rm quacktail-client
 ```
 
 Use **`--force-recreate`** on the server after script or SQL changes (otherwise the old DuckDB process keeps running).
+
+**Refresh stale `/work` SQL without running the client demo** (one container, no DuckDB session):
+
+```bash
+docker compose run --rm -e QUACKTAIL_ROLE=bootstrap quacktail-client
+docker compose --profile test run --rm quacktail-client
+```
+
+Do **not** use `quacktail-client true` — compose sets `QUACKTAIL_ROLE=client`, so that still runs the full demo.
 
 **Release binary instead of source build:**
 
@@ -61,17 +70,21 @@ Expect:
 
 QuackTail cluster demo
 ======================
-→ join tailnet, tailscale_ping quacktail-server:9494, quack_query, ATTACH quack:127.0.0.1:19494 ...
+→ join tailnet, forward, attach_ducklake, ATTACH quack:127.0.0.1:19494 ...
 
-CALL tailscale_up(...);           → running true
-CALL tailscale_quack_forward(...); → active true, quack:127.0.0.1:19494
-CALL tailscale_ping(...);         → reachable true
-FROM quack_query(...);            → probe 1
+CALL tailscale_up(...);              → running true
+CALL tailscale_quack_forward(...);  → quack:127.0.0.1:19494
+CALL tailscale_ping(...);            → reachable true
+FROM quack_query(...);               → probe 1
+CALL attach_ducklake(...);           → lake.inventory view created
+SELECT * FROM lake.inventory ...;
+SELECT 'LAKE_PASSED' ...;
 ATTACH 'quack:127.0.0.1:19494' AS remote (TYPE quack);
-SELECT * FROM remote.e2e_payload LIMIT 5;
 SELECT 'PASSED' ...;
+CALL tailscale_down();
+SELECT 'CLIENT_DEMO_DONE' ...;
 
-✓ Demo passed — two-node QuackTail cluster is working
+✓ Demo passed — QuackTail cluster + DuckLake over tailnet
 ```
 
 The client runs one DuckDB session (`duckdb -batch -echo -f /work/client_session.sql`). Compose waits for `quacktail-server` **healthy** (server.log shows `quack_serve` + `tailscale_serve_local`) before starting the client.
