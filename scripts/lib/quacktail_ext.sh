@@ -12,6 +12,25 @@ quacktail_ext_container_dir() {
   echo "${QUACKTAIL_CONTAINER_EXT_DIR:-/duckdb_extensions}"
 }
 
+quacktail_has_quackscale_function() {
+  local fn="${1:?function name required}"
+  local duckdb_bin="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
+  local count
+  [[ -x "$duckdb_bin" ]] || return 1
+  count="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "SET extension_directory='${ext_dir}'; LOAD quackscale; \
+     SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
+    2>/dev/null | tr -d '[:space:]')"
+  if [[ "$count" == "1" ]]; then
+    return 0
+  fi
+  count="$("$duckdb_bin" :memory: -batch -csv -noheader -c \
+    "LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
+    2>/dev/null | tr -d '[:space:]')"
+  [[ "$count" == "1" ]]
+}
+
 quacktail_ext_verify_artifact() {
   local install_path="${1:?install path}"
   if [[ -f "$install_path" ]]; then

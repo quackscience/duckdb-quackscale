@@ -4,6 +4,14 @@ set -euo pipefail
 
 WORK="${QUACKTAIL_WORK:-/work}"
 DUCKDB_BIN="${DUCKDB_BIN:-/usr/local/bin/duckdb}"
+
+# shellcheck source=/dev/null
+source /usr/local/lib/quacktail_ext.sh
+
+duckdb_has_quackscale_function() {
+  quacktail_has_quackscale_function "$@"
+}
+
 SERVER_HOST="${SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${QUACK_PORT:-9494}"
@@ -29,6 +37,16 @@ mkdir -p "$WORK"
 CLIENT_STATE_DIR="/tmp/client-tailscale"
 ATTACH_URI="quack:${SERVER_HOST}:${QUACK_PORT}"
 
+client_sql_lake_mode() {
+  if [[ "$ENABLE_DUCKLAKE" != "1" ]]; then
+    echo "off"
+  elif duckdb_has_quackscale_function attach_ducklake; then
+    echo "attach_ducklake"
+  else
+    echo "quack_query"
+  fi
+}
+
 resolve_server_tailnet_ip() {
   "${HS[@]}" nodes list 2>/dev/null | grep -F "$SERVER_HOST" | grep -oE '100\.64\.[0-9]+\.[0-9]+' | head -1 || true
 }
@@ -38,26 +56,12 @@ resolve_attach_uri() {
 }
 
 resolve_client_attach_uri() {
-  local ext_dir="/duckdb_extensions"
-  if command -v duckdb >/dev/null 2>&1 \
-    && duckdb :memory: -batch -csv -noheader -c \
-      "SET extension_directory='${ext_dir}'; LOAD quackscale; SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='tailscale_quack_forward';" \
-      2>/dev/null | grep -qx '1'; then
+  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-/duckdb_extensions}"
+  if duckdb_has_quackscale_function tailscale_quack_forward; then
     echo "quack:127.0.0.1:${QUACK_FORWARD_LOCAL_PORT}"
   else
     resolve_attach_uri
   fi
-}
-
-duckdb_has_quackscale_function() {
-  local fn="$1"
-  local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-/duckdb_extensions}"
-  local count
-  count="$("$DUCKDB_BIN" :memory: -batch -csv -noheader -c \
-    "SET extension_directory='${ext_dir}'; LOAD quackscale; \
-     SELECT COUNT(*) FROM duckdb_functions() WHERE function_name='${fn}';" \
-    2>/dev/null | tr -d '[:space:]')"
-  [[ "$count" == "1" ]]
 }
 
 compose_attach_is_local_forward() {
@@ -201,6 +205,7 @@ write_client_session_sql() {
     fi
   fi
   cat >"$WORK/client_session.sql" <<SQL
+-- quacktail: client-session lake=$(client_sql_lake_mode)
 LOAD quackscale;
 
 CALL tailscale_up(
@@ -348,34 +353,36 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     write_server_ducklake_sql
     echo "✓ server ducklake SQL ready — ${LAKE_NAME} @ ${LAKE_METADATA}"
   fi
-  if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
-    || [[ ! -f "$WORK/client_session.sql" ]] \
-    || [[ ! -f "$WORK/client_init.sql" ]] \
-    || [[ -f "$WORK/client_demo.sql" && ! -f "$WORK/client_quack.sql" ]] \
-    || { [[ -f "$WORK/client_quack.sql" ]] && grep -q 'NOT EXISTS' "$WORK/client_quack.sql"; } \
-    || { [[ -f "$WORK/client_init.sql" ]] && ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql"; } \
-    || { [[ -f "$WORK/client_quack.sql" ]] && grep -qE "quack:100\.64\." "$WORK/client_quack.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_forward' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && grep -q '\\n' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'CALL tailscale_down' "$WORK/client_session.sql" \
-         && ! duckdb_has_quackscale_function tailscale_down; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function tailscale_down \
-         && ! grep -q 'CALL tailscale_down' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'CLIENT_DEMO_DONE' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q 'DISCOVERED' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && grep -q 'quacktail_attach_remote_lake' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function attach_ducklake \
-         && ! grep -q 'attach_ducklake' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function attach_ducklake \
-         && grep -q 'FROM quack_query' "$WORK/client_session.sql" \
-         && grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql" \
-         && ! grep -q 'attach_ducklake' "$WORK/client_session.sql"; } \
-    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
-    refresh_client_sql "$AUTHKEY"
-    echo "✓ client SQL ready — attach ${ATTACH_URI}"
+  if [[ "${QUACKTAIL_MANAGE_CLIENT_SQL:-0}" == "1" ]]; then
+    if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
+      || [[ ! -f "$WORK/client_session.sql" ]] \
+      || [[ ! -f "$WORK/client_init.sql" ]] \
+      || [[ -f "$WORK/client_demo.sql" && ! -f "$WORK/client_quack.sql" ]] \
+      || { [[ -f "$WORK/client_quack.sql" ]] && grep -q 'NOT EXISTS' "$WORK/client_quack.sql"; } \
+      || { [[ -f "$WORK/client_init.sql" ]] && ! grep -q "${CLIENT_STATE_DIR}" "$WORK/client_init.sql"; } \
+      || { [[ -f "$WORK/client_quack.sql" ]] && grep -qE "quack:100\.64\." "$WORK/client_quack.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_forward' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && grep -q '\\n' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'CALL tailscale_down' "$WORK/client_session.sql" \
+           && ! duckdb_has_quackscale_function tailscale_down; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function tailscale_down \
+           && ! grep -q 'CALL tailscale_down' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'CLIENT_DEMO_DONE' "$WORK/client_session.sql"; } \
+      || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q 'DISCOVERED' "$WORK/client_session.sql"; } \
+      || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && grep -q 'quacktail_attach_remote_lake' "$WORK/client_session.sql"; } \
+      || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function attach_ducklake \
+           && ! grep -q 'attach_ducklake' "$WORK/client_session.sql"; } \
+      || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function attach_ducklake \
+           && grep -q 'FROM quack_query' "$WORK/client_session.sql" \
+           && grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql" \
+           && ! grep -q 'attach_ducklake' "$WORK/client_session.sql"; } \
+      || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
+      refresh_client_sql "$AUTHKEY"
+      echo "✓ client SQL ready — attach ${ATTACH_URI} (lake: $(client_sql_lake_mode))"
+    fi
   fi
   exit 0
 fi

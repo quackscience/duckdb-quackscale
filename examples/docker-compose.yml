@@ -145,6 +145,7 @@ services:
       QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: server
       QUACKTAIL_AUTO_BOOTSTRAP: "1"
+      QUACKTAIL_MANAGE_CLIENT_SQL: "0"
       HEADSCALE_CONFIG: /etc/headscale/config.yaml
     healthcheck:
       test: [CMD, /usr/local/bin/quacktail-server-healthcheck.sh]
@@ -167,6 +168,7 @@ services:
       <<: *env
       QUACKTAIL_WORK: /work
       QUACKTAIL_ROLE: client
+      QUACKTAIL_MANAGE_CLIENT_SQL: "1"
       QUACKTAIL_WAIT_SERVER: quacktail-server
       HEADSCALE_CONFIG: /etc/headscale/config.yaml
     restart: "no"

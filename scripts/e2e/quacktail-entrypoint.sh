@@ -138,7 +138,8 @@ quacktail_filter_demo_stream() {
 
 ensure_client_sql() {
   if [[ -f "${WORK}/authkey" ]] && [[ -x /usr/local/bin/quacktail-compose-bootstrap.sh ]]; then
-    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+    COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_MANAGE_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 \
+      /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
   if [[ ! -f "${WORK}/client_session.sql" ]]; then
     echo "error: ${WORK}/client_session.sql missing" >&2
@@ -304,7 +305,7 @@ run_bootstrap() {
     echo "→ refreshing /work SQL on volume (no client demo) ..."
   fi
   COMPOSE_REFRESH_CLIENT_SQL=1 COMPOSE_REFRESH_SERVER_QUACK=1 \
-    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+    QUACKTAIL_MANAGE_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   if [[ "$QUIET" == "1" ]]; then
     echo "✓ bootstrap complete — run: docker compose --profile test run --rm quacktail-client"
   else
@@ -320,6 +321,18 @@ client_demo_banner() {
     echo "→ join tailnet, forward, attach_ducklake, ATTACH ${attach_uri} ..."
   else
     echo "→ join tailnet, tailscale_ping ${SERVER_HOST}:${PORT}, quack_query, ATTACH ${attach_uri} ..."
+  fi
+}
+
+quacktail_log_quackscale_caps() {
+  [[ "$QUIET" == "1" ]] || return 0
+  local lake_mode="quack_query"
+  local down="no"
+  quacktail_has_quackscale_function attach_ducklake && lake_mode="attach_ducklake"
+  quacktail_has_quackscale_function tailscale_down && down="yes"
+  echo "→ quackscale: lake=${lake_mode} tailscale_down=${down}"
+  if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" && "$lake_mode" == "quack_query" ]]; then
+    echo "  (rebuild images with BUILD_FROM_SOURCE=1 for attach_ducklake — release v1.0.2 lacks it)"
   fi
 }
 
@@ -342,6 +355,7 @@ run_client() {
 
   wait_for_tailnet_server
   ensure_quack
+  quacktail_log_quackscale_caps
   ensure_server_hosts_mapping
   ensure_client_sql
   attach_uri="$(client_attach_uri)"

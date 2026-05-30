@@ -29,6 +29,8 @@ Quack HTTP uses **kernel TCP**. Embedded tsnet does not route that traffic. `tai
 
 ## Run the demo
 
+**Requires source-built images** (`BUILD_FROM_SOURCE=1`, compose default) for `attach_ducklake` and `tailscale_down`. Release tag `v1.0.2` does not include them.
+
 ```bash
 git pull && cd examples
 docker compose build --no-cache quacktail-server quacktail-client
@@ -66,7 +68,8 @@ Expect:
 ```text
 → waiting for quacktail-server on tailnet ...
 ✓ quacktail-server on tailnet
-✓ client SQL ready — attach quack:127.0.0.1:19494
+✓ client SQL ready — attach quack:127.0.0.1:19494 (lake: attach_ducklake)
+→ quackscale: lake=attach_ducklake tailscale_down=yes
 
 QuackTail cluster demo
 ======================
