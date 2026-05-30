@@ -167,10 +167,98 @@ ATTACH 'quack:127.0.0.1:19494' AS remote (TYPE quack, DISABLE_SSL true);
 FROM remote.query('SELECT 42');
 
 DETACH remote;
+SELECT 'CLIENT_DEMO_DONE' AS status;
 CALL tailscale_down();
 ```
 
-Full client recipe (probe, DuckLake, compose markers): **[docs/GUIDE.md](docs/GUIDE.md)**.
+Runnable compose demo (source build): **[examples/README.md](examples/README.md)**.
+
+### DuckLake over the tailnet
+
+**Pattern:** the server owns the DuckLake catalog and Parquet files; the client queries via `attach_ducklake` (views that delegate to `quack_query` on the server). Requires a **source-built** quackscale with `attach_ducklake` and `tailscale_down` — see [examples/README.md](examples/README.md).
+
+**Server** — attach lake locally, serve Quack on loopback, publish on the mesh:
+
+```sql
+LOAD quack;
+LOAD ducklake;
+LOAD quackscale;
+
+CALL tailscale_up(
+    hostname => 'lake-server',
+    state_dir => '/var/lib/quacktail/lake-server'
+);
+
+ATTACH 'ducklake:/data/lake/metadata/inventory.ducklake' AS lake (
+    DATA_PATH '/data/lake/parquet/'
+);
+USE lake;
+
+CREATE TABLE IF NOT EXISTS inventory (item_id INTEGER, quantity INTEGER);
+INSERT INTO inventory VALUES (101, 50), (102, 120);
+
+CALL quack_serve(
+    'quack:127.0.0.1:9494',
+    allow_other_hostname => true,
+    token => quack_token()
+);
+CALL tailscale_serve_local(port => 9494);
+```
+
+**Client** — forward Quack over tsnet, attach remote lake as local views, verify rows:
+
+```sql
+LOAD quackscale;
+LOAD quack;
+
+CALL tailscale_up(hostname => 'lake-client', state_dir => '…', …);
+CALL tailscale_quack_forward(
+    host => 'lake-server',
+    port => 9494,
+    local_port => 19494
+);
+CALL tailscale_ping(host => 'lake-server', port => 9494);
+
+CREATE SECRET (
+    TYPE quack,
+    TOKEN 'your-shared-quack-token',
+    SCOPE 'quack:127.0.0.1:19494'
+);
+
+FROM quack_query(
+    'quack:127.0.0.1:19494',
+    'SELECT 1 AS probe',
+    token => 'your-shared-quack-token',
+    disable_ssl => true
+);
+
+CALL attach_ducklake(
+    'quack:127.0.0.1:19494',
+    remote_catalog => 'lake',
+    alias => 'lake',
+    token => 'your-shared-quack-token',
+    disable_ssl => true
+);
+
+SELECT * FROM lake.inventory ORDER BY item_id;
+-- → item_id 101 / 102 with quantities from server Parquet
+
+SELECT 'CLIENT_DEMO_DONE' AS status;
+CALL tailscale_down();
+```
+
+**Why not `ATTACH 'ducklake:quack:…'` on the client?** That pattern needs client-side `DATA_PATH` to the same Parquet files. When the lake lives only on the server disk, use `attach_ducklake` instead. See [docs/GUIDE.md](docs/GUIDE.md#use-case-2--ducklake-on-the-server-patterns-b--b).
+
+**Verify locally:**
+
+```bash
+cd examples
+docker compose build quacktail-server quacktail-client
+docker compose up -d --force-recreate headscale quacktail-server
+docker compose --profile test run --rm quacktail-client
+```
+
+Expect `LAKE_PASSED`, `PASSED`, and `✓ Demo passed`.
 
 ---
 
