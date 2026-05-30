@@ -170,9 +170,9 @@ write_client_session_sql() {
   local attach_uri="${2:?attach uri required}"
   local ping_sql=""
   local forward_sql=""
-  local lake_discover=""
   local lake_select=""
   local lake_passed_sql=""
+  local lake_discover_sql=""
   if duckdb_has_quackscale_function tailscale_ping; then
     ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
   fi
@@ -182,7 +182,7 @@ write_client_session_sql() {
     forward_sql="CALL tailscale_quack_proxy();"
   fi
   if [[ "$ENABLE_DUCKLAKE" == "1" ]]; then
-    lake_discover=$"SELECT 'DISCOVERED' AS status, '${attach_uri}' AS quack_uri, '${SERVER_HOST}' AS server_host;\n"
+    lake_discover_sql="SELECT 'DISCOVERED' AS status, '${attach_uri}' AS quack_uri, '${SERVER_HOST}' AS server_host;"
     lake_select="$(compose_sql_quack_query "$attach_uri" "SELECT * FROM ${LAKE_NAME}.inventory ORDER BY item_id LIMIT 5")"
     lake_passed_sql="$(compose_sql_quack_query "$attach_uri" "SELECT 'LAKE_PASSED' AS status, COUNT(*)::INTEGER AS inventory_rows FROM ${LAKE_NAME}.inventory")"
   fi
@@ -217,7 +217,8 @@ FROM quack_query(
     disable_ssl => true
 );
 
-${lake_discover}${lake_select}
+${lake_discover_sql}
+${lake_select}
 ${lake_passed_sql}
 $(compose_sql_attach_remote "$attach_uri")
 
@@ -230,6 +231,10 @@ SELECT
     COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
 SQL
+  if grep -q '\\n' "$WORK/client_session.sql" 2>/dev/null; then
+    echo "error: generated client_session.sql contains literal \\n" >&2
+    exit 1
+  fi
   write_client_init_sql "$authkey"
   cp "$WORK/client_session.sql" "$WORK/client_demo.sql"
 }
@@ -332,7 +337,9 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_proxy' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_forward' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && grep -q '\\n' "$WORK/client_session.sql"; } \
+    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q 'DISCOVERED' "$WORK/client_session.sql"; } \
     || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"

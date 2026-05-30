@@ -138,10 +138,14 @@ quacktail_filter_demo_stream() {
 
 ensure_client_sql() {
   if [[ -f "${WORK}/authkey" ]] && [[ -x /usr/local/bin/quacktail-compose-bootstrap.sh ]]; then
-    COMPOSE_REFRESH_CLIENT_SQL=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+    QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
   if [[ ! -f "${WORK}/client_session.sql" ]]; then
     echo "error: ${WORK}/client_session.sql missing" >&2
+    exit 1
+  fi
+  if grep -q '\\n' "${WORK}/client_session.sql" 2>/dev/null; then
+    echo "error: ${WORK}/client_session.sql contains literal \\n (regenerate bootstrap)" >&2
     exit 1
   fi
 }
@@ -185,6 +189,15 @@ quacktail_client_on_signal() {
   exit 130
 }
 
+quacktail_client_has_fatal_sql_error() {
+  local out="${1:?client out file}"
+  local tsnet_log="${WORK}/client-tsnet.log"
+  grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$out" 2>/dev/null \
+    && return 0
+  [[ -s "$tsnet_log" ]] \
+    && grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$tsnet_log" 2>/dev/null
+}
+
 run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
@@ -196,13 +209,12 @@ run_duckdb_client_session() {
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
 
-  # Write directly to client.out — never pipe through grep (stdout backpressure deadlock).
+  # Live tee to stdout + client.out — do not pipe through grep (deadlock) or buffer until exit.
   set +o pipefail
   if [[ "$QUIET" == "1" ]]; then
     "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
       -cmd "$ext_cmd" -f "$session_sql" \
-      >"$out" 2>>"$tsnet_log" || duckdb_rc=$?
-    cat "$out"
+      2>>"$tsnet_log" | tee "$out" || duckdb_rc=$?
   else
     "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
       -cmd "$ext_cmd" -f "$session_sql" \
@@ -234,6 +246,10 @@ run_client() {
   trap 'quacktail_client_on_signal INT' INT
   trap 'quacktail_client_on_signal TERM' TERM
 
+  if [[ "$QUIET" == "1" ]]; then
+    echo "→ preparing client (tailnet wait, extensions, session SQL) ..."
+  fi
+
   wait_for_tailnet_server
   ensure_quack
   ensure_server_hosts_mapping
@@ -261,6 +277,11 @@ run_client() {
       || duckdb_rc=$?
     if quacktail_is_signal_rc "$duckdb_rc"; then
       exit "$duckdb_rc"
+    fi
+    if quacktail_client_has_fatal_sql_error "$out"; then
+      echo "error: non-retryable SQL failure in client session" >&2
+      quacktail_dump_client_failure
+      exit 1
     fi
     if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
       if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" != "1" ]] || grep -q "LAKE_PASSED" "$out" 2>/dev/null; then
