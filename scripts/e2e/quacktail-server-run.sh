@@ -9,7 +9,11 @@ INIT_SQL="${WORK}/server_init.sql"
 READY="${WORK}/quack_ready"
 LOG="${WORK}/server.log"
 WAIT_SEC="${QUACKTAIL_SERVER_READY_SEC:-180}"
-READY_MARKER="${QUACKTAIL_SERVER_READY_MARKER:-QUACKTAIL_SERVER_READY}"
+PORT="${QUACK_PORT:-9494}"
+SERVER_HOST="${SERVER_HOST:-quacktail-server}"
+
+# shellcheck source=/dev/null
+source /usr/local/lib/quacktail_ext.sh
 
 rm -f "$READY"
 : >"$LOG"
@@ -25,10 +29,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-server_init_complete() {
-  grep -Fq "$READY_MARKER" "$LOG" 2>/dev/null
-}
-
 for ((i = 1; i <= WAIT_SEC; i++)); do
   if ! kill -0 "$duck_pid" 2>/dev/null; then
     echo "error: server DuckDB exited during init (see ${LOG})" >&2
@@ -36,7 +36,7 @@ for ((i = 1; i <= WAIT_SEC; i++)); do
     wait "$duck_pid" || true
     exit 1
   fi
-  if server_init_complete; then
+  if quacktail_server_log_ready "$LOG" "$PORT" "$SERVER_HOST"; then
     touch "$READY"
     break
   fi
@@ -44,7 +44,7 @@ for ((i = 1; i <= WAIT_SEC; i++)); do
 done
 
 if [[ ! -f "$READY" ]]; then
-  echo "error: server init did not reach ${READY_MARKER} within ${WAIT_SEC}s (see ${LOG})" >&2
+  echo "error: server init did not finish quack_serve + tailscale_serve_local within ${WAIT_SEC}s (see ${LOG})" >&2
   tail -40 "$LOG" >&2 || true
   exit 1
 fi

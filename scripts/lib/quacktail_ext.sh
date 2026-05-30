@@ -73,3 +73,22 @@ quacktail_ci_ensure_quack() {
   "$duckdb_bin" :memory: -batch -echo -c \
     "${set_ext} LOAD quack; SELECT extension_name, loaded, install_path FROM duckdb_extensions() WHERE extension_name='quack';"
 }
+
+# Server init finished: explicit marker and/or quack_serve + tailscale_serve_local output in server.log.
+quacktail_server_log_ready() {
+  local log="${1:?server.log path required}"
+  local port="${2:-${QUACK_PORT:-9494}}"
+  local server_host="${3:-${SERVER_HOST:-quacktail-server}}"
+  [[ -s "$log" ]] || return 1
+  if grep -Fq 'QUACKTAIL_SERVER_READY' "$log" 2>/dev/null; then
+    return 0
+  fi
+  # Matches compose demo output when marker SQL is absent (stale /work/server_quack.sql).
+  if grep -Fq "quack:127.0.0.1:${port}" "$log" 2>/dev/null \
+    && grep -Fq 'local_forward' "$log" 2>/dev/null \
+    && grep -Fq "127.0.0.1:${port}" "$log" 2>/dev/null \
+    && grep -Fq "│ true    │ ${server_host} │" "$log" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
