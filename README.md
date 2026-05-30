@@ -2,7 +2,7 @@
 
 # QuackScale
 
-**QuackScale** embeds a [Tailscale](https://tailscale.com) / WireGuard client ([libtailscale](https://github.com/tailscale/libtailscale)) inside DuckDB so a process can join a private tailnet and reach peers over encrypted mesh networking — without a separate VPN sidecar, tunnel daemon, or public ingress.
+**QuackScale** embeds a WireGuard client for Tailscale/Headscale/etc ([libtailscale](https://github.com/tailscale/libtailscale)) inside DuckDB so a process can join a private tailnet and reach peers over encrypted mesh networking — without a separate VPN sidecar, tunnel daemon, or public ingress.
 
 Combined with DuckDB’s [Quack](https://duckdb.org/docs/current/quack/overview) HTTP protocol, you get **QuackTail**: SQL engines that discover each other on `100.x.x.x` / MagicDNS, authenticate callers, and run `ATTACH`, `quack_query`, and DuckLake workloads across the mesh.
 
