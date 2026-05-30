@@ -33,27 +33,44 @@ Traditional setups expose DuckDB/Quack on localhost or bind a public IP and add 
 | **WireGuard encryption** | Traffic between tailnet nodes is encrypted end-to-end ([Noise](https://tailscale.com/blog/how-tailscale-works) / WireGuard). Quack HTTP rides inside that mesh — not cleartext on the public internet. |
 | **No public listen by default** | Nodes get tailnet IPs (`100.64.0.0/10`). Quack binds loopback; `tailscale_serve_local` exposes **9494** only on the mesh. Nothing needs a world-routable address. |
 | **Identity-based access** | Tailscale or [Headscale](https://github.com/juanfont/headscale) ACLs decide **which nodes** may open TCP to a peer. Quack tokens decide **which callers** may run SQL — [defense in depth](docs/AUTHENTICATION.md). |
+| **Secure Shared Tokens** | Set `QUACK_TAILNET_TOKEN` once for the fleet. Every server and client on the tailnet uses the same secret for `quack_serve`, `ATTACH`, `quack_query`, and `attach_ducklake` — no per-node random tokens to copy or rotate individually. |
 | **No sidecar VPN** | libtailscale (tsnet) runs in-process. One binary, one lifecycle — ideal for containers, batch jobs, and edge nodes that should not run `tailscaled` separately. |
 | **NAT traversal** | Mesh connectivity works across NATs and regions (direct paths or DERP relays). DuckDB nodes on laptops, cloud VMs, and on-prem can mesh without manual port forwarding. |
 | **Self-hosted or SaaS control plane** | Same SQL API for [Tailscale](https://tailscale.com) and [Headscale](https://headscale.net/) — set `control_url` and a preauth key. |
 | **Manage the tailnet from SQL** | Join, status, ping, forward, serve, and teardown are **`CALL` table functions** — scriptable in migrations, init SQL, and orchestration hooks. |
 
-QuackScale handles **reachability and transport**. You still configure [Quack application auth](docs/AUTHENTICATION.md) (`QUACK_TAILNET_TOKEN`, secrets, allowlists) for who may execute SQL.
+QuackScale handles **reachability and transport**. Pair it with a fleet-wide `QUACK_TAILNET_TOKEN` so every node on the mesh can reach Quack and DuckLake peers with the same application secret — details in [Quack application auth](docs/AUTHENTICATION.md).
 
 ---
 
 ## How QuackTail fits together
 
-```text
-  Server (long-lived)                    Client (job / laptop)
-  ───────────────────                    ─────────────────────
-  CALL tailscale_up(...)                 CALL tailscale_up(...)
-  CALL quack_serve(127.0.0.1:9494)       CALL tailscale_quack_forward(host => …)
-  CALL tailscale_serve_local(:9494)            │
-         │                                       ▼
-         │         WireGuard mesh               quack:127.0.0.1:19494
-         └◄──────── tailscale_dial ────────────┘
-                    ATTACH / quack_query / attach_ducklake
+```mermaid
+flowchart LR
+    subgraph server["Server (long-lived)"]
+        direction TB
+        S1["tailscale_up()"]
+        S2["quack_serve(127.0.0.1:9494)"]
+        S3["tailscale_serve_local(:9494)"]
+        S1 --> S2 --> S3
+    end
+
+    subgraph mesh["WireGuard mesh"]
+        M(("100.x · MagicDNS"))
+    end
+
+    subgraph client["Client (job / laptop)"]
+        direction TB
+        C1["tailscale_up()"]
+        C2["tailscale_quack_forward(host)"]
+        C3["ATTACH · quack_query · attach_ducklake"]
+        C1 --> C2 --> C3
+    end
+
+    S3 <-->|tailscale_dial| M
+    M <-->|encrypted TCP| C2
+    C2 --> L["quack:127.0.0.1:19494"]
+    C3 --> L
 ```
 
 **`tailscale_quack_forward`** is required when the client uses embedded tsnet: Quack speaks normal HTTP/TCP, which kernel routing does not send over the tailnet by itself. The forwarder listens on loopback and dials peers via `tailscale_dial`.
