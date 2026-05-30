@@ -31,6 +31,8 @@ jobs:
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          echo "github.ref=${{ github.ref }}"
+          echo "github.sha=${{ github.sha }}"
           echo "Git commit: $(git rev-parse HEAD)"
           grep -q 'docker compose build quacktail-server' scripts/ci_headscale_e2e.sh \
             || { echo "error: ci_headscale_e2e.sh must use docker compose (not legacy quacktail-ci containers)" >&2; exit 1; }
