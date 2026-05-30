@@ -70,7 +70,7 @@ When bumping the DuckDB target:
 
 | Workflow | Purpose |
 |----------|---------|
-| [headscale-e2e.yml](../.github/workflows/headscale-e2e.yml) | **Full compose e2e** — build, verify-image, DuckLake + Quack demo |
+| [headscale-e2e.yml](../.github/workflows/headscale-e2e.yml) | **Full compose e2e** (manual `workflow_dispatch` only) |
 | [docker-compose-build.yml](../.github/workflows/docker-compose-build.yml) | Compose build + verify-image (PR gate) |
 | [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | Source build + Headscale smoke on host |
 | [Release.yml](../.github/workflows/Release.yml) | Linux release tarball on GitHub Release |

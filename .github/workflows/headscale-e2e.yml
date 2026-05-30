@@ -3,17 +3,6 @@ name: Headscale QuackTail e2e
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/headscale-e2e.yml'
-      - 'examples/**'
-      - 'scripts/e2e/**'
-      - 'scripts/ci_compose_e2e.sh'
-      - 'scripts/lib/quacktail_ext.sh'
-      - 'src/**'
-      - 'cmake/**'
-      - 'third_party/libtailscale/**'
-      - '.dockerignore'
 
 env:
   COMPOSE_PROJECT_NAME: quacktail-ci

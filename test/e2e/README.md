@@ -23,7 +23,7 @@ Expect `LAKE_PASSED`, `PASSED`, `attach_ducklake`, and `✓ Demo passed`.
 
 | Workflow | What it runs |
 |----------|----------------|
-| [headscale-e2e.yml](../../.github/workflows/headscale-e2e.yml) | Full compose e2e (`scripts/ci_compose_e2e.sh`) on PR + manual dispatch |
+| [headscale-e2e.yml](../../.github/workflows/headscale-e2e.yml) | Full compose e2e (`scripts/ci_compose_e2e.sh`) — **manual dispatch only** |
 | [docker-compose-build.yml](../../.github/workflows/docker-compose-build.yml) | Build + verify-image only (faster PR gate) |
 | [headscale-integration.yml](../../.github/workflows/headscale-integration.yml) | Source build + Headscale smoke (`tailscale_up` on host) |
 
