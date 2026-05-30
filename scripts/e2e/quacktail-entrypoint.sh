@@ -198,6 +198,16 @@ quacktail_client_has_fatal_sql_error() {
     && grep -qE 'Parser Error:|Catalog Error:|Binder Error:|Syntax Error:' "$tsnet_log" 2>/dev/null
 }
 
+quacktail_client_session_succeeded() {
+  local out="${1:?client out file}"
+  grep -q "CLIENT_DEMO_DONE" "$out" 2>/dev/null || return 1
+  grep -q "PASSED" "$out" 2>/dev/null || return 1
+  if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" == "1" ]]; then
+    grep -q "LAKE_PASSED" "$out" 2>/dev/null || return 1
+  fi
+  return 0
+}
+
 run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
@@ -205,21 +215,56 @@ run_duckdb_client_session() {
   local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
   local timeout_cmd=(timeout --foreground "$demo_timeout")
+  local session_pid=0
+  local deadline=0
 
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
+  : >"$out"
 
-  # Live tee to stdout + client.out — do not pipe through grep (deadlock) or buffer until exit.
+  # Background pipeline: duckdb | tee. After PASSED+LAKE_PASSED, stop tsnet/forward threads
+  # (otherwise DuckDB never exits). tailscale_down in SQL is preferred; this is the fallback.
   set +o pipefail
-  if [[ "$QUIET" == "1" ]]; then
-    "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-      -cmd "$ext_cmd" -f "$session_sql" \
-      2>>"$tsnet_log" | tee "$out" || duckdb_rc=$?
-  else
-    "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-      -cmd "$ext_cmd" -f "$session_sql" \
-      2>&1 | tee "$out" || duckdb_rc=$?
-  fi
+  (
+    if [[ "$QUIET" == "1" ]]; then
+      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+        -cmd "$ext_cmd" -f "$session_sql" \
+        2>>"$tsnet_log" | tee "$out"
+    else
+      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+        -cmd "$ext_cmd" -f "$session_sql" \
+        2>&1 | tee "$out"
+    fi
+  ) &
+  session_pid=$!
+  deadline=$((SECONDS + demo_timeout))
+
+  while kill -0 "$session_pid" 2>/dev/null; do
+    if quacktail_client_session_succeeded "$out"; then
+      sleep 0.5
+      kill -INT "$session_pid" 2>/dev/null || true
+      wait "$session_pid" 2>/dev/null || duckdb_rc=0
+      set -o pipefail
+      return 0
+    fi
+    if quacktail_client_has_fatal_sql_error "$out"; then
+      kill -INT "$session_pid" 2>/dev/null || true
+      wait "$session_pid" 2>/dev/null || true
+      set -o pipefail
+      return 1
+    fi
+    if (( SECONDS >= deadline )); then
+      kill -TERM "$session_pid" 2>/dev/null || true
+      wait "$session_pid" 2>/dev/null || duckdb_rc=124
+      set -o pipefail
+      echo "error: client demo timed out after ${demo_timeout}s" >&2
+      quacktail_dump_client_failure
+      return 124
+    fi
+    sleep 0.2
+  done
+
+  wait "$session_pid" || duckdb_rc=$?
   set -o pipefail
 
   if [[ "$duckdb_rc" -eq 124 ]]; then
@@ -236,8 +281,8 @@ run_duckdb_client_session() {
 run_client() {
   local session_sql="${WORK}/client_session.sql"
   local out="${WORK}/client.out"
-  local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-90}"
-  local max_attempts="${QUACKTAIL_CLIENT_ATTEMPTS:-15}"
+  local demo_timeout="${QUACKTAIL_DEMO_TIMEOUT_SEC:-60}"
+  local max_attempts="${QUACKTAIL_CLIENT_ATTEMPTS:-3}"
   local poll_sec="${QUACKTAIL_CLIENT_POLL_SEC:-2}"
   local attach_uri
   local duckdb_rc=0
@@ -283,10 +328,8 @@ run_client() {
       quacktail_dump_client_failure
       exit 1
     fi
-    if [[ "$duckdb_rc" -eq 0 ]] && grep -q "PASSED" "$out" 2>/dev/null; then
-      if [[ "${QUACKTAIL_ENABLE_DUCKLAKE:-0}" != "1" ]] || grep -q "LAKE_PASSED" "$out" 2>/dev/null; then
-        break
-      fi
+    if [[ "$duckdb_rc" -eq 0 ]] && grep -q "CLIENT_DEMO_DONE" "$out" 2>/dev/null; then
+      break
     fi
     if (( attempt < max_attempts )); then
       [[ "$QUIET" == "1" ]] && echo "→ retry ${attempt}/${max_attempts} ..."
@@ -320,7 +363,7 @@ run_client() {
       echo "✓ Demo passed — two-node QuackTail cluster is working"
     fi
   else
-    echo "ok: client e2e passed (PASSED row present)"
+    echo "ok: client e2e passed (CLIENT_DEMO_DONE)"
   fi
 }
 

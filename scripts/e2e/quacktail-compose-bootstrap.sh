@@ -173,6 +173,10 @@ write_client_session_sql() {
   local lake_select=""
   local lake_passed_sql=""
   local lake_discover_sql=""
+  local client_cleanup_sql=""
+  if duckdb_has_quackscale_function tailscale_down; then
+    client_cleanup_sql="CALL tailscale_down();"
+  fi
   if duckdb_has_quackscale_function tailscale_ping; then
     ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
   fi
@@ -230,6 +234,11 @@ SELECT
     MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
     COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
+
+DETACH remote;
+${client_cleanup_sql}
+
+SELECT 'CLIENT_DEMO_DONE' AS status;
 SQL
   if grep -q '\\n' "$WORK/client_session.sql" 2>/dev/null; then
     echo "error: generated client_session.sql contains literal \\n" >&2
@@ -339,6 +348,8 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_forward' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && grep -q '\\n' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'CLIENT_DEMO_DONE' "$WORK/client_session.sql"; } \
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'DETACH remote' "$WORK/client_session.sql"; } \
     || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q 'DISCOVERED' "$WORK/client_session.sql"; } \
     || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"

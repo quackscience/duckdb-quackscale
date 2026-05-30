@@ -130,6 +130,28 @@ static void QuackscaleStatusFunction(ClientContext &context, TableFunctionInput 
 	bind.finished = true;
 }
 
+struct QuackscaleDownBindData : public TableFunctionData {
+	bool finished = false;
+};
+
+static unique_ptr<FunctionData> QuackscaleDownBind(ClientContext &context, TableFunctionBindInput &input,
+                                                   vector<LogicalType> &return_types, vector<string> &names) {
+	return_types = {LogicalType::BOOLEAN};
+	names = {"shutdown_ok"};
+	return make_uniq<QuackscaleDownBindData>();
+}
+
+static void QuackscaleDownFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &bind = data_p.bind_data->CastNoConst<QuackscaleDownBindData>();
+	if (bind.finished) {
+		return;
+	}
+	TailscaleBridge::Get().Shutdown();
+	output.SetCardinality(1);
+	output.SetValue(0, 0, Value::BOOLEAN(true));
+	bind.finished = true;
+}
+
 static void QuackscaleQuackUriFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto uri = TailscaleBridge::Get().QuackListenURI(QUACKSCALE_DEFAULT_QUACK_PORT);
 	result.Reference(Value(uri));
@@ -459,6 +481,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction up_function("tailscale_up", {}, QuackscaleUpFunction, QuackscaleUpBind);
 	RegisterAuthParameters(up_function);
 	loader.RegisterFunction(up_function);
+
+	TableFunction down_function("tailscale_down", {}, QuackscaleDownFunction, QuackscaleDownBind);
+	loader.RegisterFunction(down_function);
 
 	TableFunction login_function("tailscale_login", {}, QuackscaleBeginLoginFunction,
 	                             QuackscaleBeginLoginBind);
