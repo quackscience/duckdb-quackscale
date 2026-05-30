@@ -98,8 +98,8 @@ SELECT * FROM lake.inventory ...;
 SELECT 'LAKE_PASSED' ...;
 ATTACH 'quack:127.0.0.1:19494' AS remote (TYPE quack);
 SELECT 'PASSED' ...;
-CALL tailscale_down();
 SELECT 'CLIENT_DEMO_DONE' ...;
+CALL tailscale_down();
 
 ✓ Demo passed — QuackTail cluster + DuckLake over tailnet
 ```

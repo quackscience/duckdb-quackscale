@@ -247,7 +247,8 @@ run_duckdb_client_session() {
   : >"$tsnet_log"
   : >"$out"
 
-  # Background duckdb → client.out; monitor file for CLIENT_DEMO_DONE then SIGTERM/KILL.
+  # Background duckdb → client.out; monitor client.out for CLIENT_DEMO_DONE then SIGTERM/KILL.
+  # CLIENT_DEMO_DONE is emitted before tailscale_down (tsnet close can block).
   set +o pipefail
   if [[ "$QUIET" == "1" ]]; then
     "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \

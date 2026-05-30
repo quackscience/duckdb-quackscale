@@ -253,9 +253,9 @@ FROM remote.e2e_payload;
 
 DETACH remote;
 
-${teardown_sql}
-
 SELECT 'CLIENT_DEMO_DONE' AS status;
+
+${teardown_sql}
 SQL
   if grep -q '\\n' "$WORK/client_session.sql" 2>/dev/null; then
     echo "error: generated client_session.sql contains literal \\n" >&2
@@ -371,6 +371,10 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
       || { [[ -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function tailscale_down \
            && ! grep -q 'CALL tailscale_down' "$WORK/client_session.sql"; } \
       || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'CLIENT_DEMO_DONE' "$WORK/client_session.sql"; } \
+      || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'CALL tailscale_down' "$WORK/client_session.sql" \
+           && grep -q 'CLIENT_DEMO_DONE' "$WORK/client_session.sql" \
+           && [[ "$(grep -n 'CALL tailscale_down' "$WORK/client_session.sql" | head -1 | cut -d: -f1)" \
+                -lt "$(grep -n "CLIENT_DEMO_DONE" "$WORK/client_session.sql" | head -1 | cut -d: -f1)" ]]; } \
       || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q 'DISCOVERED' "$WORK/client_session.sql"; } \
       || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && grep -q 'quacktail_attach_remote_lake' "$WORK/client_session.sql"; } \
       || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && duckdb_has_quackscale_function attach_ducklake \

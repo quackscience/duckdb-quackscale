@@ -97,6 +97,7 @@ private:
 	void RefreshIPs();
 	string LastErrorMessage() const;
 	void JoinLoginThread();
+	void DetachLoginThread();
 	string ResolveAuthKey(const string &authkey) const;
 	void MaybeStartLoopbackProxy(bool enable);
 	void StartLoopbackProxy();

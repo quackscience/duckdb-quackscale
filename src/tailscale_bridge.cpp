@@ -137,6 +137,12 @@ void TailscaleBridge::JoinLoginThread() {
 	}
 }
 
+void TailscaleBridge::DetachLoginThread() {
+	if (login_thread.joinable()) {
+		login_thread.detach();
+	}
+}
+
 TailscaleStatus TailscaleBridge::Status() const {
 	TailscaleStatus status;
 	status.linked =
@@ -386,18 +392,21 @@ TailscaleLoginStatus TailscaleBridge::LoginStatus() const {
 void TailscaleBridge::Shutdown() {
 	std::lock_guard<std::mutex> guard(g_tailscale_mutex);
 	log_capture.Stop();
-	JoinLoginThread();
+	// Do not join — interactive login or tsnet teardown can block indefinitely.
+	DetachLoginThread();
 	forwarder.Stop();
 	ClearProxyEnvironment();
 #ifdef QUACKSCALE_WITH_TAILSCALE
-	if (handle >= 0) {
-		tailscale_clear_serve(handle);
-		tailscale_close(handle);
-		handle = -1;
+	int closing = handle;
+	handle = -1;
+	running = false;
+	if (closing >= 0) {
+		tailscale_clear_serve(closing);
+		// tailscale_close waits for AuthLoop; detach so CALL tailscale_down() returns.
+		std::thread([closing]() { tailscale_close(closing); }).detach();
 	}
 #else
 #endif
-	running = false;
 	ips.clear();
 	login_state = "idle";
 	login_message.clear();
