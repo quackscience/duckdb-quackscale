@@ -96,6 +96,13 @@ quacktail_ci_start_server() {
     "${QUACKTAIL_DOCKER_EXT_ARGS[@]}" \
     -e QUACKTAIL_ROLE=server \
     -e QUACKTAIL_WORK=/work \
+    -e QUACKTAIL_QUIET=1 \
+    -e QUACKTAIL_ENABLE_DUCKLAKE="${QUACKTAIL_ENABLE_DUCKLAKE:-1}" \
+    -e "SERVER_HOST=${hostname}" \
+    -e "HEADSCALE_CONTROL_URL=${HEADSCALE_CONTROL_URL:-http://headscale:8080}" \
+    -e "QUACKTAIL_LAKE_NAME=${QUACKTAIL_LAKE_NAME:-lake}" \
+    -e "QUACKTAIL_LAKE_METADATA=${QUACKTAIL_LAKE_METADATA:-/work/ducklake/metadata/inventory.ducklake}" \
+    -e "QUACKTAIL_LAKE_DATA_PATH=${QUACKTAIL_LAKE_DATA_PATH:-/work/ducklake/data}" \
     -e "QUACK_PORT=${port}" \
     -e "QUACK_TAILNET_TOKEN=${QUACK_TAILNET_TOKEN:-}" \
     "$QUACKTAIL_IMAGE"
@@ -168,6 +175,12 @@ quacktail_ci_start_client() {
     -e QUACKTAIL_ROLE=client \
     -e QUACKTAIL_WORK=/work \
     -e QUACKTAIL_QUIET=1 \
+    -e QUACKTAIL_ENABLE_DUCKLAKE="${QUACKTAIL_ENABLE_DUCKLAKE:-1}" \
+    -e QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE="${QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE:-1}" \
+    -e "SERVER_HOST=${server_host}" \
+    -e "CLIENT_HOST=${E2E_CLIENT_HOST:-quacktail-client}" \
+    -e "HEADSCALE_CONTROL_URL=${HEADSCALE_CONTROL_URL:-http://headscale:8080}" \
+    -e "QUACK_FORWARD_LOCAL_PORT=${E2E_FORWARD_LOCAL_PORT:-19494}" \
     -e "QUACK_PORT=${port}" \
     -e "E2E_SERVER_IP=${server_ip}" \
     -e "E2E_SERVER_HOST=${server_host}" \

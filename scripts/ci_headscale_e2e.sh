@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # CI e2e: release duckdb bind-mounted into minimal containers (no DuckDB compile).
+# Quack-over-tailnet only — DuckLake is disabled (see compose demo for DuckLake).
 # For source-built compose demo locally, use scripts/ci_compose_e2e.sh instead.
 set -euo pipefail
 
@@ -9,11 +10,16 @@ QUACKTAIL_CI_ROOT="$ROOT"
 # shellcheck source=scripts/lib/quacktail_ci.sh
 source "$ROOT/scripts/lib/quacktail_ci.sh"
 
+# Headscale e2e is quack-only; do not load DuckLake in shared entrypoint scripts.
+export QUACKTAIL_ENABLE_DUCKLAKE=0
+export QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE=0
+export DUCKDB_BIN="$DUCKDB"
+
 QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-e2e-shared-token}"
 SERVER_HOST="${E2E_SERVER_HOST:-quacktail-server}"
 CLIENT_HOST="${E2E_CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${E2E_QUACK_PORT:-9494}"
-CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-60}"
+CLIENT_TIMEOUT="${E2E_CLIENT_TIMEOUT_SEC:-180}"
 export E2E_SERVER_HOST="$SERVER_HOST"
 
 WORK="${E2E_WORK:-${GITHUB_WORKSPACE:-$ROOT}/.e2e-work}"
@@ -41,11 +47,12 @@ if [[ ! -x "$DUCKDB" ]]; then
 fi
 
 echo "Using DuckDB: $DUCKDB"
-echo "E2e: Headscale up; server + client DuckDB containers run concurrently"
+echo "E2e: Headscale + Quack query over tailnet (DuckLake disabled)"
 
 export DUCKDB_EXTENSION_DIRECTORY="${DUCKDB_EXTENSION_DIRECTORY:-$WORK/duckdb_extensions}"
 quacktail_ci_docker_ext_setup
 quacktail_ci_ensure_quack "$DUCKDB" "$DUCKDB_EXTENSION_DIRECTORY" install
+quacktail_ci_ensure_quackscale_release "$DUCKDB_EXTENSION_DIRECTORY"
 quacktail_ci_build_image "$ROOT"
 
 mkdir -p "$HS_DATA"
@@ -67,6 +74,9 @@ export QUACK_TAILNET_TOKEN="$QUACK_TOKEN"
 CONTAINER_SERVER_STATE="/work/server-tailscale"
 CONTAINER_CLIENT_STATE="/tmp/client-tailscale"
 
+# No DuckLake in this e2e — drop stale compose SQL if present on the work volume.
+rm -f "$WORK/server_ducklake.sql"
+
 {
   headscale_ci_sql_tailscale_up "$SERVER_HOST" "$CONTAINER_SERVER_STATE" "$AUTHKEY"
   cat <<SQL
@@ -85,13 +95,17 @@ LOAD quack;
 
 SQL
   headscale_ci_sql_quack_serve "$QUACK_PORT"
-} >"$WORK/server_quack.sql"
+  cat <<SQL
 
-headscale_ci_sql_tailscale_up "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY" \
-  >"$WORK/client_init.sql"
+SELECT 'QUACKTAIL_SERVER_READY' AS status;
+SQL
+} >"$WORK/server_quack.sql"
 
 echo "=== Starting server container ($SERVER_HOST) ==="
 quacktail_ci_start_server "$DUCKDB" "$WORK" "$SERVER_HOST" "$QUACK_PORT"
+
+echo "=== Waiting for server quack_ready ==="
+quacktail_ci_wait_server "$QUACK_PORT"
 
 echo "=== Resolving server tailnet IP ==="
 SERVER_IP="$(headscale_ci_node_ipv4 "$SERVER_HOST" 60)"
@@ -104,9 +118,13 @@ printf '%s' "$SERVER_QUACK_URI" >"$WORK/attach_uri"
 headscale_ci_sql_client_session "$CLIENT_HOST" "$CONTAINER_CLIENT_STATE" "$AUTHKEY" \
   "$SERVER_HOST" "$QUACK_PORT" "$SERVER_QUACK_URI" "$QUACK_TOKEN" \
   >"$WORK/client_session.sql"
+cat >>"$WORK/client_session.sql" <<'SQL'
 
-headscale_ci_sql_quack_client_demo "$SERVER_QUACK_URI" "$QUACK_TOKEN" "$SERVER_QUACK_URI" \
-  >"$WORK/client_quack.sql"
+SELECT 'CLIENT_DEMO_DONE' AS status;
+SQL
+if headscale_ci_quackscale_fn_available tailscale_down; then
+  echo "CALL tailscale_down();" >>"$WORK/client_session.sql"
+fi
 
 export E2E_SERVER_IP="$SERVER_IP"
 export QUACKTAIL_ATTACH_URI="$SERVER_QUACK_URI"
@@ -153,11 +171,12 @@ echo "$CLIENT_OUT" | grep -q 'PASSED' || {
 }
 echo "ok: PASSED summary"
 
-echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
-  echo "error: client INSERT not found" >&2
+echo "$CLIENT_OUT" | grep -q 'CLIENT_DEMO_DONE' || {
+  echo "error: CLIENT_DEMO_DONE marker missing from client output" >&2
+  echo "$CLIENT_OUT" >&2
   exit 1
 }
-echo "ok: client row"
+echo "ok: client demo finished cleanly"
 
 echo "$CLIENT_OUT" | grep -q 'seed-from-server' || {
   echo "error: server seed not found" >&2
@@ -165,4 +184,10 @@ echo "$CLIENT_OUT" | grep -q 'seed-from-server' || {
 }
 echo "ok: server row"
 
-echo "Headscale QuackTail e2e passed (server + client ran concurrently)."
+echo "$CLIENT_OUT" | grep -q 'insert-from-client' || {
+  echo "error: client INSERT not found" >&2
+  exit 1
+}
+echo "ok: client row via quack ATTACH"
+
+echo "Headscale QuackTail e2e passed (Quack query over tailnet)."

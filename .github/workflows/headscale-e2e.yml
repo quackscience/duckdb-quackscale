@@ -7,10 +7,11 @@ on:
       release_tag:
         description: 'GitHub release tag (use "latest" for newest release)'
         required: false
-        default: v1.0.2
+        default: v1.0.3
         type: string
 
 env:
+  QUACKTAIL_RELEASE_TAG_DEFAULT: v1.0.3
   HEADSCALE_HOST: headscale
   HEADSCALE_CONTROL_URL: http://headscale:8080
   HEADSCALE_MAGICDNS_BASE_DOMAIN: quackscale-ci.test
@@ -19,6 +20,8 @@ env:
   E2E_CLIENT_TIMEOUT_SEC: 180
   QUACKTAIL_CLIENT_ATTEMPTS: 15
   QUACKTAIL_CLIENT_POLL_SEC: 2
+  QUACKTAIL_ENABLE_DUCKLAKE: "0"
+  QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE: "0"
 
 jobs:
   quacktail-e2e:
@@ -32,10 +35,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download QuackTail release binary
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          RELEASE_TAG="${INPUT_RELEASE_TAG:-${QUACKTAIL_RELEASE_TAG_DEFAULT}}"
+          echo "Release tag: ${RELEASE_TAG}"
           chmod +x scripts/ci_download_release_duckdb.sh
-          eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
+          eval "$(./scripts/ci_download_release_duckdb.sh "${RELEASE_TAG}")"
           echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
+          echo "QUACKTAIL_RELEASE_ROOT=$QUACKTAIL_RELEASE_ROOT" >> "$GITHUB_ENV"
           "$DUCKDB" -version || "$DUCKDB" --version
 
       - name: Install quack extension
@@ -58,7 +66,7 @@ jobs:
           echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
           chmod 600 "$RUNNER_TEMP/headscale-authkey"
 
-      - name: Run QuackTail e2e (server + client concurrent)
+      - name: Run QuackTail e2e (server + client)
         env:
           HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
           HEADSCALE_ALREADY_RUNNING: "1"

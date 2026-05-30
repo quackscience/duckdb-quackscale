@@ -683,3 +683,171 @@ SELECT
 FROM remote.e2e_payload;
 SQL
 }
+
+# Escape single quotes for SQL embedded in quack_query(..., '...').
+headscale_ci_sql_escape() {
+  printf "%s" "${1:?}" | sed "s/'/''/g"
+}
+
+headscale_ci_sql_quack_query() {
+  local attach_uri="${1:?attach uri required}"
+  local sql="${2:?sql required}"
+  local token="${3:?token required}"
+  local escaped
+  escaped="$(headscale_ci_sql_escape "$sql")"
+  cat <<SQL
+FROM quack_query(
+    '${attach_uri}',
+    '${escaped}',
+    token => '${token}',
+    disable_ssl => true
+);
+SQL
+}
+
+# Server DuckLake catalog (matches compose write_server_ducklake_sql).
+# Paths in SQL are container paths (e.g. /work/ducklake/...); mode is seed|persist.
+headscale_ci_sql_server_ducklake() {
+  local lake_name="${1:-lake}"
+  local lake_metadata="${2:?metadata path required}"
+  local lake_data="${3:?data path required}"
+  local mode="${4:-seed}"
+  headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)"
+  if [[ "$mode" == "persist" ]]; then
+    cat <<SQL
+
+LOAD ducklake;
+
+ATTACH 'ducklake:${lake_metadata}' AS ${lake_name} (DATA_PATH '${lake_data}');
+USE ${lake_name};
+SQL
+  else
+    cat <<SQL
+
+LOAD ducklake;
+
+ATTACH 'ducklake:${lake_metadata}' AS ${lake_name} (DATA_PATH '${lake_data}');
+USE ${lake_name};
+
+CREATE TABLE IF NOT EXISTS inventory (item_id INTEGER, quantity INTEGER);
+INSERT INTO inventory VALUES (101, 50), (102, 120);
+SQL
+  fi
+}
+
+headscale_ci_quackscale_fn_available() {
+  local fn="${1:?function name required}"
+  local duckdb_bin="${DUCKDB_BIN:-${DUCKDB:-}}"
+  [[ -n "$duckdb_bin" && -x "$duckdb_bin" ]] || return 1
+  DUCKDB_BIN="$duckdb_bin" quacktail_has_quackscale_function "$fn"
+}
+
+# Compose-aligned client session: DuckLake + attach_ducklake when available in release binary.
+headscale_ci_sql_client_session_ducklake() {
+  local client_host="$1"
+  local client_state="$2"
+  local authkey="$3"
+  local server_host="$4"
+  local quack_port="$5"
+  local attach_uri="$6"
+  local token="$7"
+  local forward_port="${E2E_FORWARD_LOCAL_PORT:-19494}"
+  local lake_name="${QUACKTAIL_LAKE_NAME:-lake}"
+  local enable_ducklake="${QUACKTAIL_ENABLE_DUCKLAKE:-1}"
+  local ping_sql=""
+  local forward_sql=""
+  local teardown_sql=""
+  local lake_attach_sql=""
+  local lake_select=""
+  local lake_passed_sql=""
+  local lake_discover_sql=""
+
+  if headscale_ci_quackscale_fn_available tailscale_ping; then
+    ping_sql="CALL tailscale_ping(host => '${server_host}', port => ${quack_port});"
+  fi
+  if headscale_ci_quackscale_fn_available tailscale_quack_forward; then
+    forward_sql="CALL tailscale_quack_forward(host => '${server_host}', port => ${quack_port}, local_port => ${forward_port});"
+  elif headscale_ci_quackscale_fn_available tailscale_quack_proxy; then
+    forward_sql="CALL tailscale_quack_proxy();"
+  fi
+  if headscale_ci_quackscale_fn_available tailscale_down; then
+    teardown_sql="CALL tailscale_down();"
+  fi
+  if [[ "$enable_ducklake" == "1" ]]; then
+    lake_discover_sql="SELECT 'DISCOVERED' AS status, '${attach_uri}' AS quack_uri, '${server_host}' AS server_host;"
+    if headscale_ci_quackscale_fn_available attach_ducklake; then
+      lake_attach_sql="CALL attach_ducklake('${attach_uri}', remote_catalog => '${lake_name}', alias => '${lake_name}', token => '${token}', disable_ssl => true);"
+      lake_select="SELECT * FROM ${lake_name}.inventory ORDER BY item_id LIMIT 5;"
+      lake_passed_sql="SELECT 'LAKE_PASSED' AS status, COUNT(*)::INTEGER AS inventory_rows FROM ${lake_name}.inventory;"
+    else
+      lake_select="$(headscale_ci_sql_quack_query "$attach_uri" "SELECT * FROM ${lake_name}.inventory ORDER BY item_id LIMIT 5" "$token")"
+      lake_passed_sql="$(headscale_ci_sql_quack_query "$attach_uri" "SELECT 'LAKE_PASSED' AS status, COUNT(*)::INTEGER AS inventory_rows FROM ${lake_name}.inventory" "$token")"
+    fi
+  fi
+
+  cat <<SQL
+LOAD quackscale;
+
+CALL tailscale_up(
+    hostname => '${client_host}',
+    control_url => '${HEADSCALE_CONTROL_URL}',
+    authkey => '${authkey}',
+    state_dir => '${client_state}',
+    ephemeral => true
+);
+
+${forward_sql}
+
+${ping_sql}
+
+$(headscale_ci_sql_set_extension_directory "$(headscale_ci_container_extension_directory)")
+LOAD quack;
+
+CREATE SECRET (
+    TYPE quack,
+    TOKEN '${token}',
+    SCOPE '${attach_uri}'
+);
+
+FROM quack_query(
+    '${attach_uri}',
+    'SELECT 1 AS probe',
+    token => '${token}',
+    disable_ssl => true
+);
+
+${lake_discover_sql}
+${lake_attach_sql}
+${lake_select}
+${lake_passed_sql}
+SQL
+  if headscale_ci_quack_uri_is_local "$attach_uri"; then
+    cat <<SQL
+ATTACH '${attach_uri}' AS remote (TYPE quack);
+SQL
+  else
+    cat <<SQL
+ATTACH '${attach_uri}' AS remote (
+    TYPE quack,
+    DISABLE_SSL true
+);
+SQL
+  fi
+  cat <<SQL
+
+SELECT * FROM remote.e2e_payload LIMIT 5;
+SELECT
+    'PASSED' AS status,
+    '${attach_uri}' AS attach_uri,
+    MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
+    MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
+    COUNT(*)::INTEGER AS total_rows
+FROM remote.e2e_payload;
+
+DETACH remote;
+
+SELECT 'CLIENT_DEMO_DONE' AS status;
+
+${teardown_sql}
+SQL
+}

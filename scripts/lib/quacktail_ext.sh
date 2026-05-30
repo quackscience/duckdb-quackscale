@@ -151,6 +151,24 @@ quacktail_ci_ensure_demo_extensions() {
   fi
 }
 
+# Copy loadable quackscale extension from a release tarball (optional — binary may embed it).
+quacktail_ci_ensure_quackscale_release() {
+  local ext_dir="${1:?extension directory}"
+  local release_root="${2:-${QUACKTAIL_RELEASE_ROOT:-}}"
+  [[ -n "$release_root" ]] || return 0
+  local src="$release_root/extension/quackscale/quackscale.duckdb_extension"
+  if [[ ! -f "$src" ]]; then
+    src="$(find "$release_root" -name quackscale.duckdb_extension -type f 2>/dev/null | head -1 || true)"
+  fi
+  if [[ -z "$src" || ! -f "$src" ]]; then
+    echo "warn: quackscale.duckdb_extension not found under ${release_root}; using embedded quackscale" >&2
+    return 0
+  fi
+  local dest="$ext_dir/quackscale/quackscale.duckdb_extension"
+  mkdir -p "$(dirname "$dest")"
+  install -m644 "$src" "$dest"
+}
+
 quacktail_ext_sql_load_demo() {
   local ext_dir="${1:?extension directory required}"
   echo "$(quacktail_ext_sql_set "$ext_dir")"
