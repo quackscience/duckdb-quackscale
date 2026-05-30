@@ -1,4 +1,4 @@
-# QuackTail e2e over Headscale — manual only; uses GitHub release binaries (no source build).
+# QuackTail e2e over Headscale — manual only; uses docker-compose + release binary (no source build).
 name: Headscale QuackTail e2e
 
 on:
@@ -12,20 +12,13 @@ on:
 
 env:
   QUACKTAIL_RELEASE_TAG_DEFAULT: v1.0.3
-  HEADSCALE_HOST: headscale
-  HEADSCALE_CONTROL_URL: http://headscale:8080
-  HEADSCALE_MAGICDNS_BASE_DOMAIN: quackscale-ci.test
-  E2E_QUACK_ATTACH_HOST: hostname
-  E2E_QUACK_SERVE_MODE: loopback_serve
-  E2E_CLIENT_TIMEOUT_SEC: 180
-  QUACKTAIL_CLIENT_ATTEMPTS: 15
-  QUACKTAIL_CLIENT_POLL_SEC: 2
+  BUILD_FROM_SOURCE: "0"
   QUACKTAIL_ENABLE_DUCKLAKE: "0"
   QUACKTAIL_REQUIRE_ATTACH_DUCKLAKE: "0"
 
 jobs:
   quacktail-e2e:
-    name: QuackTail e2e (release binary + Headscale)
+    name: QuackTail e2e (compose + release binary)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -34,58 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download QuackTail release binary
+      - name: Run QuackTail compose e2e
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          RELEASE_TAG="${INPUT_RELEASE_TAG:-${QUACKTAIL_RELEASE_TAG_DEFAULT}}"
-          echo "Release tag: ${RELEASE_TAG}"
-          chmod +x scripts/ci_download_release_duckdb.sh
-          eval "$(./scripts/ci_download_release_duckdb.sh "${RELEASE_TAG}")"
-          echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
-          echo "QUACKTAIL_RELEASE_ROOT=$QUACKTAIL_RELEASE_ROOT" >> "$GITHUB_ENV"
-          "$DUCKDB" -version || "$DUCKDB" --version
-
-      - name: Install quack extension
-        env:
-          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
-        run: |
-          echo "DUCKDB_EXTENSION_DIRECTORY=$DUCKDB_EXTENSION_DIRECTORY" >> "$GITHUB_ENV"
-          chmod +x scripts/ci_ensure_quack.sh scripts/lib/quacktail_ci.sh scripts/lib/quacktail_ext.sh
-          ./scripts/ci_ensure_quack.sh
-
-      - name: Start Headscale
-        run: |
-          chmod +x scripts/lib/headscale_ci.sh
-          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
-          export HEADSCALE_DATA_DIR="$RUNNER_TEMP/headscale-data"
-          # shellcheck source=scripts/lib/headscale_ci.sh
-          source scripts/lib/headscale_ci.sh
-          headscale_ci_start "$HEADSCALE_DATA_DIR"
-          AUTHKEY="$(headscale_ci_create_authkey)"
-          echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
-          chmod 600 "$RUNNER_TEMP/headscale-authkey"
-
-      - name: Run QuackTail e2e (server + client)
-        env:
-          HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
-          HEADSCALE_ALREADY_RUNNING: "1"
-          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
-        run: |
-          chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh scripts/lib/quacktail_ci.sh scripts/e2e/quacktail-entrypoint.sh
+          export QUACKTAIL_RELEASE_TAG="${INPUT_RELEASE_TAG:-${QUACKTAIL_RELEASE_TAG_DEFAULT}}"
+          echo "Release tag: ${QUACKTAIL_RELEASE_TAG}"
+          chmod +x scripts/ci_headscale_e2e.sh
           ./scripts/ci_headscale_e2e.sh
-
-      - name: Stop containers
-        if: always()
-        run: |
-          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
-          export QUACKTAIL_CI_ROOT="$GITHUB_WORKSPACE"
-          # shellcheck source=scripts/lib/quacktail_ci.sh
-          source scripts/lib/quacktail_ci.sh
-          quacktail_ci_stop
-          # shellcheck source=scripts/lib/headscale_ci.sh
-          source scripts/lib/headscale_ci.sh
-          headscale_ci_stop
 
       - name: Upload e2e logs
         if: always()
