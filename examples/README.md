@@ -1,6 +1,8 @@
 # QuackTail Docker Compose example
 
-Two-node **Headscale + QuackTail** demo on Linux: a long-lived **server** DuckDB joins the tailnet and serves Quack on port 9494; a one-shot **client** joins the same tailnet, forwards Quack HTTP through tsnet, and `ATTACH`es the remote database.
+Two-node **Headscale + QuackTail** demo on Linux: server joins the tailnet and serves Quack; client `ATTACH`es via `tailscale_quack_forward`.
+
+**DuckLake combo (branch `ducklake`):** [ducklake/README.md](ducklake/README.md)
 
 **Requires:** Linux, Docker Compose v2, `/dev/net/tun`, outbound HTTPS.
 

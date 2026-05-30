@@ -1,38 +1,45 @@
-# DuckLake over QuackTail (planned)
+# DuckLake over QuackTail
 
-Goal: serve DuckLake (or SQLite / Postgres-backed catalogs) on a node via **Quack**, reachable only on the **Headscale tailnet**, with **discovery** similar to `quack_discover()`.
+Goal: serve DuckLake on a QuackTail node via **Quack**, reachable on the **Headscale tailnet**, with discovery similar to `quack_discover()`.
 
-## Target architecture
+## Status on branch `ducklake`
+
+| Piece | Status |
+|-------|--------|
+| Server: local DuckLake + `quack_serve` + `tailscale_serve_local` | **Done** (compose bootstrap) |
+| Client: `tailscale_quack_forward` + `remote.lake.*` queries | **Done** (compose e2e) |
+| `ducklake_discover()` / enriched `quack_discover` | TBD |
+| Client `ducklake:quack:` attach with client-side `DATA_PATH` | Documented, not in compose e2e |
+| CI DuckLake profile | TBD |
+
+## Architecture
 
 ```text
 ┌─────────────────────┐     tailnet      ┌─────────────────────┐
 │  quacktail-client   │ ◄──────────────► │  quacktail-server   │
-│  ATTACH quack:…     │                  │  quack_serve        │
-│  quack_discover()   │                  │  ATTACH ducklake:…  │
-└─────────────────────┘                  │  (lake catalog)     │
+│  ATTACH quack:…     │                  │  ATTACH ducklake:…  │
+│  remote.lake.*      │                  │  quack_serve        │
+└─────────────────────┘                  │  Parquet → /work/lake/data
                                          └─────────────────────┘
 ```
 
-1. **Server** joins tailnet, runs `quack_serve`, attaches local DuckLake (or other catalog) as the served DuckDB session catalog.
-2. **Client** joins tailnet, `quack_discover()` finds `quack:<host>:9494`, `ATTACH`es, queries `remote.<lake_schema>.<table>`.
-3. **Discovery extension** (future QuackScale work): advertise DuckLake URIs alongside Quack URIs, e.g. columns `listen_uri`, `catalog_type` (`quack`, `ducklake`, `sqlite`), `attach_hint`.
+1. **Server** joins tailnet, attaches DuckLake (`lake` catalog, local metadata + Parquet), runs `quack_serve` + `tailscale_serve_local`.
+2. **Client** joins tailnet, `tailscale_quack_forward`, `ATTACH`es Quack at `127.0.0.1:19494`, queries `remote.lake.inventory`.
 
-## Constraints (today)
+## Constraints
 
-- **Quack streaming-scan limit** — one remote read or write per SQL statement on an attached catalog; see [QUACK_STREAMING.md](QUACK_STREAMING.md). DuckLake workloads often use separate statements or server-side execution, so parallelism is less blocked than multi-scan single statements on ATTACH.
-- **Nested catalogs** — Quack ATTACH exposes the server's session catalogs; deep names like `remote.lake.schema.table` may need `quack_query()` until Quack nested-catalog support lands ([duckdb#22605](https://github.com/duckdb/duckdb/issues/22605)).
+- **Quack streaming-scan limit** — one remote read or write per SQL statement; see [QUACK_STREAMING.md](QUACK_STREAMING.md).
+- **Nested catalogs** — `remote.lake.table` works when the server attached `lake` before `quack_serve`. Deep paths may need `quack_query()` until upstream nested-catalog support lands.
 
-## Demo recipe (next step after compose e2e)
+## Demo
 
-1. Server bootstrap SQL: `INSTALL ducklake; LOAD ducklake; ATTACH 'ducklake:…' AS lake …;` then `quack_serve`.
-2. Client: same compose flow as today; `SELECT * FROM remote.lake.main.my_table LIMIT 5`.
-3. CI: extend `scripts/ci_headscale_e2e.sh` with optional DuckLake profile (Postgres or local metadata).
+See [examples/ducklake/README.md](../examples/ducklake/README.md).
 
 ## QuackScale changes (not in core `quack`)
 
 | Piece | Owner | Notes |
 |-------|--------|------|
-| Tailnet join, `quack_uri`, `quack_discover` | quackscale | Done |
-| Compose / Headscale demo | quackscale | Done |
-| `ducklake_discover()` or enriched `quack_discover` | quackscale | TBD — metadata from server whoami / config |
+| Tailnet join, `tailscale_quack_forward` | quackscale | Done |
+| Compose DuckLake server bootstrap | quackscale | Done on `ducklake` branch |
+| `ducklake_discover()` or enriched `quack_discover` | quackscale | TBD |
 | Quack multi-scan planner | duckdb-quack | Upstream |

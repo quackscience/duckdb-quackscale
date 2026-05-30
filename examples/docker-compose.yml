@@ -29,6 +29,10 @@ x-env: &env
   SERVER_HOST: quacktail-server
   CLIENT_HOST: quacktail-client
   DUCKDB_EXTENSION_DIRECTORY: /duckdb_extensions
+  QUACKTAIL_ENABLE_DUCKLAKE: ${QUACKTAIL_ENABLE_DUCKLAKE:-1}
+  QUACKTAIL_LAKE_NAME: ${QUACKTAIL_LAKE_NAME:-lake}
+  QUACKTAIL_LAKE_METADATA: ${QUACKTAIL_LAKE_METADATA:-/work/lake/metadata/inventory.ducklake}
+  QUACKTAIL_LAKE_DATA_PATH: ${QUACKTAIL_LAKE_DATA_PATH:-/work/lake/data}
 
 x-headscale-volumes: &headscale_volumes
   configs:

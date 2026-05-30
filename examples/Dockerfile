@@ -78,7 +78,9 @@ RUN mkdir -p /duckdb_extensions \
          cp -a /opt/quacktail-build/quackscale-ext/. /duckdb_extensions/; \
        fi \
     && duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL quack FROM core; LOAD quack; SELECT 1;" \
-    || duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;"
+    || duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL quack FROM core_nightly; LOAD quack; SELECT 1;" \
+    && duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL ducklake FROM core; LOAD ducklake; SELECT 1;" \
+    || duckdb :memory: -batch -c "SET extension_directory='/duckdb_extensions'; INSTALL ducklake FROM core_nightly; LOAD ducklake; SELECT 1;"
 
 COPY scripts/e2e/quacktail-entrypoint.sh /usr/local/bin/quacktail-entrypoint.sh
 COPY scripts/e2e/quacktail-compose-bootstrap.sh /usr/local/bin/quacktail-compose-bootstrap.sh

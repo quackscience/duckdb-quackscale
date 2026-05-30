@@ -8,6 +8,10 @@ CLIENT_HOST="${CLIENT_HOST:-quacktail-client}"
 QUACK_PORT="${QUACK_PORT:-9494}"
 QUACK_FORWARD_LOCAL_PORT="${QUACK_FORWARD_LOCAL_PORT:-19494}"
 QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-demo-token}"
+LAKE_NAME="${QUACKTAIL_LAKE_NAME:-lake}"
+LAKE_METADATA="${QUACKTAIL_LAKE_METADATA:-${WORK}/lake/metadata/inventory.ducklake}"
+LAKE_DATA_PATH="${QUACKTAIL_LAKE_DATA_PATH:-${WORK}/lake/data}"
+ENABLE_DUCKLAKE="${QUACKTAIL_ENABLE_DUCKLAKE:-1}"
 CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://headscale:8080}"
 HS_USER="${HEADSCALE_USER:-quackscale-demo}"
 HS_CFG="${HEADSCALE_CONFIG:-/etc/headscale/config.yaml}"
@@ -74,6 +78,22 @@ SQL
   fi
 }
 
+write_server_ducklake_sql() {
+  [[ "$ENABLE_DUCKLAKE" == "1" ]] || return 0
+  mkdir -p "$(dirname "$LAKE_METADATA")" "$LAKE_DATA_PATH"
+  cat >"$WORK/server_ducklake.sql" <<SQL
+SET extension_directory='/duckdb_extensions';
+LOAD ducklake;
+
+ATTACH 'ducklake:${LAKE_METADATA}' AS ${LAKE_NAME} (DATA_PATH '${LAKE_DATA_PATH}');
+USE ${LAKE_NAME};
+
+CREATE TABLE IF NOT EXISTS inventory (item_id INTEGER, quantity INTEGER);
+DELETE FROM inventory;
+INSERT INTO inventory VALUES (101, 50), (102, 120);
+SQL
+}
+
 write_server_quack_sql() {
   # Quack on loopback; tailscale_serve_local publishes :9494 on the tailnet (tsnet-in-process).
   # Direct quack:0.0.0.0 bind only hits the host loopback — cross-node ATTACH never reaches it.
@@ -110,7 +130,9 @@ write_client_session_sql() {
   local attach_uri="${2:?attach uri required}"
   local ping_sql=""
   local forward_sql=""
-  local ext_dir="/duckdb_extensions"
+  local lake_load=""
+  local lake_select=""
+  local lake_passed_col=""
   if duckdb_has_quackscale_function tailscale_ping; then
     ping_sql="CALL tailscale_ping(host => '${SERVER_HOST}', port => ${QUACK_PORT});"
   fi
@@ -118,6 +140,11 @@ write_client_session_sql() {
     forward_sql="CALL tailscale_quack_forward(host => '${SERVER_HOST}', port => ${QUACK_PORT}, local_port => ${QUACK_FORWARD_LOCAL_PORT});"
   elif duckdb_has_quackscale_function tailscale_quack_proxy; then
     forward_sql="CALL tailscale_quack_proxy();"
+  fi
+  if [[ "$ENABLE_DUCKLAKE" == "1" ]]; then
+    lake_load=$'LOAD ducklake;\n'
+    lake_select=$"SELECT * FROM remote.${LAKE_NAME}.inventory ORDER BY item_id LIMIT 5;\n"
+    lake_passed_col=$",\n    (SELECT COUNT(*)::INTEGER FROM remote.${LAKE_NAME}.inventory) AS inventory_rows"
   fi
   cat >"$WORK/client_session.sql" <<SQL
 LOAD quackscale;
@@ -136,7 +163,7 @@ ${ping_sql}
 
 SET extension_directory='/duckdb_extensions';
 LOAD quack;
-
+${lake_load}
 CREATE SECRET (
     TYPE quack,
     TOKEN '${QUACK_TOKEN}',
@@ -153,13 +180,13 @@ FROM quack_query(
 $(compose_sql_attach_remote "$attach_uri")
 
 SELECT * FROM remote.e2e_payload LIMIT 5;
-
+${lake_select}
 SELECT
     'PASSED' AS status,
     '${attach_uri}' AS attach_uri,
     MAX(CASE WHEN source = 'server' THEN msg END) AS server_row,
     MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
-    COUNT(*)::INTEGER AS total_rows
+    COUNT(*)::INTEGER AS total_rows${lake_passed_col}
 FROM remote.e2e_payload;
 SQL
   write_client_init_sql "$authkey"
@@ -247,6 +274,13 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     write_server_quack_sql
     echo "✓ server quack SQL ready — loopback + tailscale_serve_local(:${QUACK_PORT})"
   fi
+  if [[ "${COMPOSE_REFRESH_SERVER_DUCKLAKE:-}" == "1" ]] \
+    || { [[ "$ENABLE_DUCKLAKE" == "1" ]] && [[ ! -f "$WORK/server_ducklake.sql" ]]; } \
+    || { [[ "$ENABLE_DUCKLAKE" == "1" ]] && [[ -f "$WORK/server_ducklake.sql" ]] \
+         && ! grep -q 'inventory' "$WORK/server_ducklake.sql" 2>/dev/null; }; then
+    write_server_ducklake_sql
+    echo "✓ server ducklake SQL ready — ${LAKE_NAME} @ ${LAKE_METADATA}"
+  fi
   if [[ "${COMPOSE_REFRESH_CLIENT_SQL:-}" == "1" ]] \
     || [[ ! -f "$WORK/client_session.sql" ]] \
     || [[ ! -f "$WORK/client_init.sql" ]] \
@@ -257,7 +291,8 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_ping' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'quack_query' "$WORK/client_session.sql"; } \
     || { [[ -f "$WORK/client_session.sql" ]] && grep -q 'ON CONFLICT' "$WORK/client_session.sql"; } \
-    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_proxy' "$WORK/client_session.sql"; }; then
+    || { [[ -f "$WORK/client_session.sql" ]] && ! grep -q 'tailscale_quack_proxy' "$WORK/client_session.sql"; } \
+    || { [[ "$ENABLE_DUCKLAKE" == "1" && -f "$WORK/client_session.sql" ]] && ! grep -q "remote.${LAKE_NAME}.inventory" "$WORK/client_session.sql"; }; then
     refresh_client_sql "$AUTHKEY"
     echo "✓ client SQL ready — attach ${ATTACH_URI}"
   fi
@@ -398,6 +433,8 @@ INSERT INTO e2e_payload VALUES (1, 'seed-from-server', 'server');
 SQL
 
 write_server_quack_sql
+
+write_server_ducklake_sql
 
 refresh_client_sql "$AUTHKEY"
 

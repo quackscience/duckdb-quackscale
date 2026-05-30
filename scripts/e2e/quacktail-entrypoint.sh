@@ -23,7 +23,7 @@ fi
 ensure_quack() {
   local ext_dir="${DUCKDB_EXTENSION_DIRECTORY:-$(quacktail_ext_container_dir)}"
   export DUCKDB_EXTENSION_DIRECTORY="$ext_dir"
-  quacktail_ci_ensure_quack "$DUCKDB" "$ext_dir" load_only
+  quacktail_ci_ensure_demo_extensions "$DUCKDB" "$ext_dir" load_only
 }
 
 quacktail_sql_extension_directory() {
@@ -105,13 +105,20 @@ ensure_server_hosts_mapping() {
 run_server() {
   maybe_compose_bootstrap
   if [[ -f "${WORK}/authkey" ]] && [[ -x /usr/local/bin/quacktail-compose-bootstrap.sh ]]; then
-    COMPOSE_REFRESH_SERVER_QUACK=1 QUACKTAIL_AUTO_BOOTSTRAP=1 /usr/local/bin/quacktail-compose-bootstrap.sh
+    COMPOSE_REFRESH_SERVER_QUACK=1 COMPOSE_REFRESH_SERVER_DUCKLAKE=1 QUACKTAIL_AUTO_BOOTSTRAP=1 \
+      /usr/local/bin/quacktail-compose-bootstrap.sh
   fi
   ensure_quack
   rm -f "${WORK}/quack_ready"
-  cat "${WORK}/server_setup.sql" "${WORK}/server_quack.sql" >"$INIT_SQL"
+  {
+    cat "${WORK}/server_setup.sql"
+    if [[ -f "${WORK}/server_ducklake.sql" ]]; then
+      cat "${WORK}/server_ducklake.sql"
+    fi
+    cat "${WORK}/server_quack.sql"
+  } >"$INIT_SQL"
   if [[ "$QUIET" == "1" ]]; then
-    echo "→ quacktail-server: join tailnet + quack_serve(127.0.0.1:${PORT}) + tailscale_serve_local"
+    echo "→ quacktail-server: tailnet + ducklake + quack_serve(127.0.0.1:${PORT}) + tailscale_serve_local"
     echo "  (libtailscale logs → ${WORK}/server.log)"
   else
     echo "=== server init SQL ==="
