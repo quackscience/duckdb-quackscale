@@ -9,8 +9,8 @@ QUACK_PORT="${QUACK_PORT:-9494}"
 QUACK_FORWARD_LOCAL_PORT="${QUACK_FORWARD_LOCAL_PORT:-19494}"
 QUACK_TOKEN="${QUACK_TAILNET_TOKEN:-quackscale-demo-token}"
 LAKE_NAME="${QUACKTAIL_LAKE_NAME:-lake}"
-LAKE_METADATA="${QUACKTAIL_LAKE_METADATA:-${WORK}/lake/metadata/inventory.ducklake}"
-LAKE_DATA_PATH="${QUACKTAIL_LAKE_DATA_PATH:-${WORK}/lake/data}"
+LAKE_METADATA="${QUACKTAIL_LAKE_METADATA:-/var/lib/ducklake/metadata/inventory.ducklake}"
+LAKE_DATA_PATH="${QUACKTAIL_LAKE_DATA_PATH:-/var/lib/ducklake/data}"
 ENABLE_DUCKLAKE="${QUACKTAIL_ENABLE_DUCKLAKE:-1}"
 CONTROL_URL="${HEADSCALE_CONTROL_URL:-http://headscale:8080}"
 HS_USER="${HEADSCALE_USER:-quackscale-demo}"
@@ -81,7 +81,18 @@ SQL
 write_server_ducklake_sql() {
   [[ "$ENABLE_DUCKLAKE" == "1" ]] || return 0
   mkdir -p "$(dirname "$LAKE_METADATA")" "$LAKE_DATA_PATH"
-  cat >"$WORK/server_ducklake.sql" <<SQL
+  if [[ -f "$LAKE_METADATA" ]]; then
+    cat >"$WORK/server_ducklake.sql" <<SQL
+-- quacktail: lake-attach (persistent volume — do not re-seed)
+SET extension_directory='/duckdb_extensions';
+LOAD ducklake;
+
+ATTACH 'ducklake:${LAKE_METADATA}' AS ${LAKE_NAME} (DATA_PATH '${LAKE_DATA_PATH}');
+USE ${LAKE_NAME};
+SQL
+  else
+    cat >"$WORK/server_ducklake.sql" <<SQL
+-- quacktail: lake-init (first boot — seeds demo inventory)
 SET extension_directory='/duckdb_extensions';
 LOAD ducklake;
 
@@ -89,9 +100,9 @@ ATTACH 'ducklake:${LAKE_METADATA}' AS ${LAKE_NAME} (DATA_PATH '${LAKE_DATA_PATH}
 USE ${LAKE_NAME};
 
 CREATE TABLE IF NOT EXISTS inventory (item_id INTEGER, quantity INTEGER);
-DELETE FROM inventory;
 INSERT INTO inventory VALUES (101, 50), (102, 120);
 SQL
+  fi
 }
 
 write_server_quack_sql() {
@@ -277,7 +288,7 @@ if [[ -f "$WORK/server_setup.sql" && -f "$WORK/authkey" ]]; then
   if [[ "${COMPOSE_REFRESH_SERVER_DUCKLAKE:-}" == "1" ]] \
     || { [[ "$ENABLE_DUCKLAKE" == "1" ]] && [[ ! -f "$WORK/server_ducklake.sql" ]]; } \
     || { [[ "$ENABLE_DUCKLAKE" == "1" ]] && [[ -f "$WORK/server_ducklake.sql" ]] \
-         && ! grep -q 'inventory' "$WORK/server_ducklake.sql" 2>/dev/null; }; then
+         && ! grep -q 'quacktail: lake-' "$WORK/server_ducklake.sql" 2>/dev/null; }; then
     write_server_ducklake_sql
     echo "✓ server ducklake SQL ready — ${LAKE_NAME} @ ${LAKE_METADATA}"
   fi

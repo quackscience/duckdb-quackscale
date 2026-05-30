@@ -9,12 +9,29 @@ quacktail-server                          quacktail-client
 ─────────────────                         ─────────────────
 tailscale_up                              tailscale_up
 ATTACH ducklake:… AS lake (local Parquet)  tailscale_quack_forward
-  └─ /work/lake/data/*.parquet            ATTACH quack:127.0.0.1:19494 AS remote
-quack_serve(127.0.0.1:9494)               SELECT * FROM remote.lake.inventory
-tailscale_serve_local
+  └─ ducklake-lake volume (/var/lib/ducklake/data/*.parquet)
+quack_serve(127.0.0.1:9494)               ATTACH quack:127.0.0.1:19494 AS remote
+tailscale_serve_local                     SELECT * FROM remote.lake.inventory
 ```
 
-Parquet files live on the **server** (`QUACKTAIL_LAKE_DATA_PATH`). Clients reach the catalog over Quack — no direct file sharing.
+Parquet + metadata live on a **named Docker volume** (`ducklake-lake` → `/var/lib/ducklake`). Survives `docker compose stop` / `down` (without `-v`).
+
+## Persistence
+
+| Action | DuckLake data |
+|--------|----------------|
+| `docker compose stop` / `start` | **Kept** — same inventory rows |
+| `docker compose down` (no `-v`) | **Kept** |
+| `docker compose down -v` | **Wiped** — re-seeds on next first boot |
+
+First boot creates metadata + demo rows `(101,50)`, `(102,120)`. Restarts **attach only** — no `DELETE` / re-seed.
+
+```bash
+# stop stack, start again — data should remain
+docker compose stop
+docker compose up -d headscale quacktail-server
+docker compose --profile test run --rm quacktail-client
+```
 
 ## Run the demo
 
@@ -37,8 +54,9 @@ Set `QUACKTAIL_ENABLE_DUCKLAKE=0` to run the original Quack-only e2e.
 |----------|---------|
 | `QUACKTAIL_ENABLE_DUCKLAKE` | `1` |
 | `QUACKTAIL_LAKE_NAME` | `lake` |
-| `QUACKTAIL_LAKE_METADATA` | `/work/lake/metadata/inventory.ducklake` |
-| `QUACKTAIL_LAKE_DATA_PATH` | `/work/lake/data` |
+| `QUACKTAIL_LAKE_METADATA` | `/var/lib/ducklake/metadata/inventory.ducklake` |
+| `QUACKTAIL_LAKE_DATA_PATH` | `/var/lib/ducklake/data` |
+| Docker volume | `ducklake-lake` → `/var/lib/ducklake` (server only) |
 
 ## Local SQL reference
 

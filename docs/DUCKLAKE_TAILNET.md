@@ -19,7 +19,7 @@ Goal: serve DuckLake on a QuackTail node via **Quack**, reachable on the **Heads
 │  quacktail-client   │ ◄──────────────► │  quacktail-server   │
 │  ATTACH quack:…     │                  │  ATTACH ducklake:…  │
 │  remote.lake.*      │                  │  quack_serve        │
-└─────────────────────┘                  │  Parquet → /work/lake/data
+└─────────────────────┘                  │  Parquet → /var/lib/ducklake (volume ducklake-lake)
                                          └─────────────────────┘
 ```
 
