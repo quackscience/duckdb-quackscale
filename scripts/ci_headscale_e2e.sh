@@ -25,7 +25,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== QuackTail compose e2e ==="
+echo "=== QuackTail compose e2e (examples/docker-compose.yml) ==="
+echo "  commit=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "  release=${QUACKTAIL_RELEASE_TAG}  BUILD_FROM_SOURCE=${BUILD_FROM_SOURCE}  QUACKTAIL_ENABLE_DUCKLAKE=${QUACKTAIL_ENABLE_DUCKLAKE}"
 
 echo "=== docker compose build quacktail-server quacktail-client ==="

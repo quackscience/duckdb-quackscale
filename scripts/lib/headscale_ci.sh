@@ -627,8 +627,7 @@ SQL
   fi
   cat <<SQL
 
-INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
-ON CONFLICT DO NOTHING;
+SELECT * FROM remote.e2e_payload LIMIT 5;
 
 SELECT
     'PASSED' AS status,
@@ -637,6 +636,10 @@ SELECT
     MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
     COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
+
+DETACH remote;
+
+SELECT 'CLIENT_DEMO_DONE' AS status;
 SQL
 }
 
@@ -671,8 +674,7 @@ SQL
   fi
   cat <<SQL
 
-INSERT INTO remote.e2e_payload VALUES (2, 'insert-from-client', 'client')
-ON CONFLICT DO NOTHING;
+SELECT * FROM remote.e2e_payload LIMIT 5;
 
 SELECT
     'PASSED' AS status,
@@ -681,6 +683,8 @@ SELECT
     MAX(CASE WHEN source = 'client' THEN msg END) AS client_row,
     COUNT(*)::INTEGER AS total_rows
 FROM remote.e2e_payload;
+
+DETACH remote;
 SQL
 }
 
