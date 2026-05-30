@@ -208,63 +208,76 @@ quacktail_client_session_succeeded() {
   return 0
 }
 
+quacktail_stop_process() {
+  local pid="${1:?pid}"
+  local wait_ms="${2:-1500}"
+  local elapsed=0
+  kill -0 "$pid" 2>/dev/null || return 0
+  while (( elapsed < wait_ms )); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    elapsed=$((elapsed + 100))
+  done
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.2
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
 run_duckdb_client_session() {
   local session_sql="${1:?session sql file}"
   local out="${2:?out file}"
   local demo_timeout="${3:?timeout}"
   local tsnet_log="${WORK}/client-tsnet.log"
   local ext_cmd duckdb_rc=0
-  local timeout_cmd=(timeout --foreground "$demo_timeout")
-  local session_pid=0
+  local timeout_cmd=(timeout --foreground --kill-after=3 "$demo_timeout")
+  local duck_pid=0
   local deadline=0
 
   ext_cmd="$(quacktail_sql_extension_directory)"
   : >"$tsnet_log"
   : >"$out"
 
-  # Background pipeline: duckdb | tee. After PASSED+LAKE_PASSED, stop tsnet/forward threads
-  # (otherwise DuckDB never exits). tailscale_down in SQL is preferred; this is the fallback.
+  # Live tee + monitor: after CLIENT_DEMO_DONE, allow tailscale_down then SIGTERM/KILL if needed.
   set +o pipefail
-  (
-    if [[ "$QUIET" == "1" ]]; then
-      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-        -cmd "$ext_cmd" -f "$session_sql" \
-        2>>"$tsnet_log" | tee "$out"
-    else
-      "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
-        -cmd "$ext_cmd" -f "$session_sql" \
-        2>&1 | tee "$out"
-    fi
-  ) &
-  session_pid=$!
-  deadline=$((SECONDS + demo_timeout))
+  if [[ "$QUIET" == "1" ]]; then
+    "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+      -cmd "$ext_cmd" -f "$session_sql" \
+      > >(tee "$out") 2>>"$tsnet_log" &
+  else
+    "${timeout_cmd[@]}" stdbuf -oL -eL "$DUCKDB" -batch -echo \
+      -cmd "$ext_cmd" -f "$session_sql" \
+      2>&1 | tee "$out" &
+  fi
+  duck_pid=$!
+  deadline=$((SECONDS + demo_timeout + 5))
 
-  while kill -0 "$session_pid" 2>/dev/null; do
+  while kill -0 "$duck_pid" 2>/dev/null; do
     if quacktail_client_session_succeeded "$out"; then
-      sleep 0.5
-      kill -INT "$session_pid" 2>/dev/null || true
-      wait "$session_pid" 2>/dev/null || duckdb_rc=0
+      # CLIENT_DEMO_DONE is printed before CALL tailscale_down(); allow it to run.
+      sleep 1.5
+      quacktail_stop_process "$duck_pid" 500
       set -o pipefail
       return 0
     fi
     if quacktail_client_has_fatal_sql_error "$out"; then
-      kill -INT "$session_pid" 2>/dev/null || true
-      wait "$session_pid" 2>/dev/null || true
+      quacktail_stop_process "$duck_pid" 500
       set -o pipefail
       return 1
     fi
     if (( SECONDS >= deadline )); then
-      kill -TERM "$session_pid" 2>/dev/null || true
-      wait "$session_pid" 2>/dev/null || duckdb_rc=124
+      quacktail_stop_process "$duck_pid" 500
       set -o pipefail
       echo "error: client demo timed out after ${demo_timeout}s" >&2
       quacktail_dump_client_failure
       return 124
     fi
-    sleep 0.2
+    sleep 0.1
   done
 
-  wait "$session_pid" || duckdb_rc=$?
+  wait "$duck_pid" || duckdb_rc=$?
   set -o pipefail
 
   if [[ "$duckdb_rc" -eq 124 ]]; then
