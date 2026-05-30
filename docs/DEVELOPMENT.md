@@ -68,13 +68,15 @@ When bumping the DuckDB target:
 
 ## CI workflows
 
-| Workflow | Purpose |
-|----------|---------|
-| [headscale-e2e.yml](../.github/workflows/headscale-e2e.yml) | **Full compose e2e** (manual `workflow_dispatch` only) |
-| [docker-compose-build.yml](../.github/workflows/docker-compose-build.yml) | Compose build + verify-image (PR gate) |
-| [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | Source build + Headscale smoke on host |
-| [Release.yml](../.github/workflows/Release.yml) | Linux release tarball on GitHub Release |
-| [libtailscale-integration.yml](../.github/workflows/libtailscale-integration.yml) | libtailscale `go test` |
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| [headscale-e2e.yml](../.github/workflows/headscale-e2e.yml) | **Manual only** | Release-binary two-node e2e (no source build) |
+| [headscale-integration.yml](../.github/workflows/headscale-integration.yml) | PR | Source build + Headscale smoke |
+| [Release.yml](../.github/workflows/Release.yml) | Release published | Build linux release tarball |
+| [libtailscale-integration.yml](../.github/workflows/libtailscale-integration.yml) | PR | libtailscale `go test` |
+| [MainDistributionPipeline.yml](../.github/workflows/MainDistributionPipeline.yml) | PR | Extension distribution CI |
+
+**E2e never runs on push/PR** and never compiles DuckDB in CI — use `workflow_dispatch` on `headscale-e2e` with a release tag. Full DuckLake compose demo is local dev only (`scripts/ci_compose_e2e.sh`).
 
 ## Roadmap (selected)
 

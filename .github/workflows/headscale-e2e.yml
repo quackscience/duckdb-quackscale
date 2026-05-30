@@ -1,54 +1,88 @@
-# QuackTail e2e — same flow as examples/README.md (source-built compose demo).
+# QuackTail e2e over Headscale — manual only; uses GitHub release binaries (no source build).
 name: Headscale QuackTail e2e
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'GitHub release tag (use "latest" for newest release)'
+        required: false
+        default: v1.0.2
+        type: string
 
 env:
-  COMPOSE_PROJECT_NAME: quacktail-ci
+  HEADSCALE_HOST: headscale
+  HEADSCALE_CONTROL_URL: http://headscale:8080
+  HEADSCALE_MAGICDNS_BASE_DOMAIN: quackscale-ci.test
+  E2E_QUACK_ATTACH_HOST: hostname
+  E2E_QUACK_SERVE_MODE: loopback_serve
+  E2E_CLIENT_TIMEOUT_SEC: 180
+  QUACKTAIL_CLIENT_ATTEMPTS: 15
+  QUACKTAIL_CLIENT_POLL_SEC: 2
 
 jobs:
-  compose-e2e:
-    name: Compose e2e (Headscale + DuckLake + Quack)
+  quacktail-e2e:
+    name: QuackTail e2e (release binary + Headscale)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Run compose e2e
+      - name: Download QuackTail release binary
         run: |
-          chmod +x scripts/ci_compose_e2e.sh
-          ./scripts/ci_compose_e2e.sh
+          chmod +x scripts/ci_download_release_duckdb.sh
+          eval "$(./scripts/ci_download_release_duckdb.sh "${{ inputs.release_tag }}")"
+          echo "DUCKDB=$DUCKDB" >> "$GITHUB_ENV"
+          "$DUCKDB" -version || "$DUCKDB" --version
 
-      - name: Collect compose logs on failure
-        if: failure()
-        working-directory: examples
+      - name: Install quack extension
+        env:
+          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
         run: |
-          docker compose ps -a || true
-          docker compose logs --no-color > "${RUNNER_TEMP}/compose-logs.txt" 2>&1 || true
-          docker compose exec -T quacktail-server tail -100 /work/server.log 2>/dev/null \
-            > "${RUNNER_TEMP}/server.log" || true
-          docker compose run --rm --entrypoint tail quacktail-client -100 /work/client.out 2>/dev/null \
-            > "${RUNNER_TEMP}/client.out" || true
+          echo "DUCKDB_EXTENSION_DIRECTORY=$DUCKDB_EXTENSION_DIRECTORY" >> "$GITHUB_ENV"
+          chmod +x scripts/ci_ensure_quack.sh scripts/lib/quacktail_ci.sh scripts/lib/quacktail_ext.sh
+          ./scripts/ci_ensure_quack.sh
 
-      - name: Upload e2e artifacts
-        if: failure()
+      - name: Start Headscale
+        run: |
+          chmod +x scripts/lib/headscale_ci.sh
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          export HEADSCALE_DATA_DIR="$RUNNER_TEMP/headscale-data"
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_start "$HEADSCALE_DATA_DIR"
+          AUTHKEY="$(headscale_ci_create_authkey)"
+          echo "$AUTHKEY" > "$RUNNER_TEMP/headscale-authkey"
+          chmod 600 "$RUNNER_TEMP/headscale-authkey"
+
+      - name: Run QuackTail e2e (server + client concurrent)
+        env:
+          HEADSCALE_AUTHKEY_FILE: ${{ runner.temp }}/headscale-authkey
+          HEADSCALE_ALREADY_RUNNING: "1"
+          DUCKDB_EXTENSION_DIRECTORY: ${{ runner.temp }}/duckdb_extensions
+        run: |
+          chmod +x scripts/ci_headscale_e2e.sh scripts/lib/headscale_ci.sh scripts/lib/quacktail_ci.sh scripts/e2e/quacktail-entrypoint.sh
+          ./scripts/ci_headscale_e2e.sh
+
+      - name: Stop containers
+        if: always()
+        run: |
+          export HEADSCALE_CI_ROOT="$GITHUB_WORKSPACE"
+          export QUACKTAIL_CI_ROOT="$GITHUB_WORKSPACE"
+          # shellcheck source=scripts/lib/quacktail_ci.sh
+          source scripts/lib/quacktail_ci.sh
+          quacktail_ci_stop
+          # shellcheck source=scripts/lib/headscale_ci.sh
+          source scripts/lib/headscale_ci.sh
+          headscale_ci_stop
+
+      - name: Upload e2e logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quacktail-compose-e2e-logs
-          path: |
-            ${{ runner.temp }}/quacktail-compose-e2e.log
-            ${{ runner.temp }}/compose-logs.txt
-            ${{ runner.temp }}/server.log
-            ${{ runner.temp }}/client.out
+          name: quacktail-e2e-logs
+          path: .e2e-work/
           if-no-files-found: warn
-
-      - name: Teardown
-        if: always()
-        working-directory: examples
-        run: docker compose --profile test down --remove-orphans -v || true

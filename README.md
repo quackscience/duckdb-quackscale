@@ -199,7 +199,7 @@ Docker images (source build + verify): **[examples/README.md](examples/README.md
 make test
 ```
 
-Unit tests need no live tailnet. Integration: [examples/README.md](examples/README.md), [test/e2e/README.md](test/e2e/README.md), [`.github/workflows/headscale-e2e.yml`](.github/workflows/headscale-e2e.yml).
+Unit tests need no live tailnet. **E2e (manual):** [`.github/workflows/headscale-e2e.yml`](.github/workflows/headscale-e2e.yml) — release binary, `workflow_dispatch` only. **Local full demo:** [examples/README.md](examples/README.md). **PR smoke:** [headscale-integration.yml](.github/workflows/headscale-integration.yml).
 
 ---
 

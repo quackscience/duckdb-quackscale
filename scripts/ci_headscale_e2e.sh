@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Legacy two-node e2e: bind-mounted host duckdb + test/e2e/Dockerfile.quacktail.
-# Prefer scripts/ci_compose_e2e.sh (examples/docker-compose.yml) — same as examples/README.md.
+# CI e2e: release duckdb bind-mounted into minimal containers (no DuckDB compile).
+# For source-built compose demo locally, use scripts/ci_compose_e2e.sh instead.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
